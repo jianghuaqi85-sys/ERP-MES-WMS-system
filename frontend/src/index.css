@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #09090b; /* Zinc 950 */
+  --color-panel: #18181b; /* Zinc 900 solid */
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-zinc-300 antialiased m-0 overflow-hidden selection:bg-zinc-700/50;
+  }
+}
+
+.glass-panel {
+  @apply bg-panel border border-zinc-800 rounded-md;
+}
+
+.glass-panel-hover {
+  @apply transition-colors duration-150;
+}
+
+.glass-panel-hover:hover {
+  @apply bg-zinc-800/50 border-zinc-700;
+}
+
+/* React Flow custom edge animation */
+.react-flow__edge-path {
+  stroke: #52525b; /* Zinc 600 */
+  stroke-width: 2;
+}
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: #10b981; /* Emerald 500 */
+  stroke-dasharray: 5;
+  animation: flow 1s linear infinite;
+}
+
+@keyframes flow {
+  from {
+    stroke-dashoffset: 10;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}

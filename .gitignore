@@ -1,0 +1,67 @@
+# ===========================================
+# Python
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+venv311/
+.venv/
+ENV/
+
+# Environment files (contain credentials)
+.env
+.env.local
+backend/.env
+frontend/.env
+
+# Logs
+logs/
+*.log
+
+# ===========================================
+# Node.js / Frontend
+# ===========================================
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# ===========================================
+# IDE / Editor
+# ===========================================
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ===========================================
+# Docker
+# ===========================================
+docker-compose.override.yml
+
+# ===========================================
+# CodeGraph
+# ===========================================
+.codegraph/
+
+# ===========================================
+# OS
+# ===========================================
+Desktop.ini
+ehthumbs.db
