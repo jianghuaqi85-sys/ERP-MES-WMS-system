@@ -1,10 +1,49 @@
-# ERP-MES-WMS 联动系统
+# ERP-MES-WMS 联动系统 (企业级多语言全链路制造与仓储管理系统)
 
-企业级制造业管理系统，实现 ERP（企业资源计划）、MES（制造执行系统）、WMS（仓储管理系统）的全链路联动。
+企业级制造业信息化核心管理系统，全面打通 **ERP（企业资源计划）**、**MES（制造执行系统）**、**WMS（仓储管理系统）** 的数据孤岛，实现销售、采购、生产、库存、发货、溯源的全链路闭环联动。
 
-> 核心价值：销售订单确认后自动下发生产工单，生产报工时自动扣减原料库存、增加成品库存并生成溯源记录，发货时自动扣减成品库存——三大系统数据实时联动，消除信息孤岛。
+> **核心价值**：销售订单确认后自动下发生产工单；MES 生产报工时通过**事件驱动**或**事务机制**自动扣减原料库存、增加成品库存，并生成批次溯源记录；WMS 出库发货时自动核销成品库存。三大系统数据实时共享、行级锁防并发，为企业数字化转型提供坚实的系统底座。
 
-## 系统预览
+---
+
+## 目录
+- [1. 系统预览](#1-系统预览)
+- [2. 系统架构](#2-系统架构)
+  - [2.1 Go 后端架构 (高并发事件驱动版)](#21-go-后端架构-高并发事件驱动版)
+  - [2.2 Python 后端架构 (经典业务/异步报表版)](#22-python-后端架构-经典业务异步报表版)
+  - [2.3 共享前端 (React 19 SPA)](#23-共享前端-react-19-spa)
+- [3. 核心业务流程与联动逻辑](#3-核心业务流程与联动逻辑)
+  - [3.1 销售到交付流程 (Order-to-Delivery)](#31-销售到交付流程-order-to-delivery)
+  - [3.2 生产与库存联动逻辑](#32-生产与库存联动逻辑)
+  - [3.3 采购到入库流程 (Procure-to-Pay)](#33-采购到入库流程-procure-to-pay)
+  - [3.4 全链路溯源图谱 (Traceability Map)](#34-全链路溯源图谱-traceability-map)
+- [4. 设计深度剖析 (Deep Dives)](#4-设计深度剖析-deep-dives)
+  - [4.1 并发与数据一致性控制](#41-并发与数据一致性控制)
+  - [4.2 接口与操作的幂等性设计](#42-接口与操作的幂等性设计)
+  - [4.3 BOM 物料防循环引用算法](#43-bom-物料防循环引用算法)
+  - [4.4 RBAC 权限模型与 Casbin 控制](#44-rbac-权限模型与-casbin-控制)
+  - [4.5 Celery 异步任务与 ReportLab 中文 PDF 报表](#45-celery-异步任务与-reportlab-中文-pdf-报表)
+  - [4.6 可观测性系统 (Jaeger Trace + Prometheus Metrics)](#46-可观测性系统-jaeger-trace--prometheus-metrics)
+- [5. 数据库设计与实体关系 (ERD)](#5-数据库设计与实体关系-erd)
+  - [5.1 ER 关系图](#51-er-关系图)
+  - [5.2 核心数据表清单](#52-核心数据表清单)
+- [6. API 端点清单](#6-api-端点清单)
+  - [6.1 Go 后端 API 接口 (Gin)](#61-go-后端-api-接口-gin)
+  - [6.2 Python 后端 API 接口 (FastAPI)](#62-python-后端-api-接口-fastapi)
+- [7. 项目目录结构](#7-项目目录结构)
+- [8. 快速启动与部署指南](#8-快速启动与部署指南)
+  - [8.1 基础设施部署](#81-基础设施部署)
+  - [8.2 Go 后端启动运行](#82-go-后端启动运行)
+  - [8.3 Python 后端与 Celery 启动运行](#83-python-后端与-celery-启动运行)
+  - [8.4 React 前端启动运行](#84-react-前端启动运行)
+  - [8.5 生产环境一键部署 (Docker Compose)](#85-生产环境一键部署-docker-compose)
+- [9. 开发规范与最佳实践](#9-开发规范与最佳实践)
+- [10. 更新日志 (2026年6月)](#10-更新日志-2026年6月)
+- [11. 许可证 (License)](#11-许可证-license)
+
+---
+
+## 1. 系统预览
 
 | 仪表盘                  | 产品管理                  | 生产工单                  |
 |:--------------------:|:---------------------:|:---------------------:|
@@ -14,181 +53,350 @@
 | **供应商**              | **溯源图谱**              |                       |
 | ![供应商](images/7.png) | ![溯源](images/8.png)   |                       |
 
-## 系统架构
+---
+
+## 2. 系统架构
+
+本系统提供了**双后端技术栈实现**。这两种实现共享相同的数据库表逻辑和前端 SPA 控制台，分别展示了不同的系统设计哲学：
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                      Nginx 反向代理                           │
-│                (负载均衡 + HTTPS + 静态资源)                   │
-├──────────────────────────────────────────────────────────────┤
-│                   前端 SPA (React 19 + TypeScript)             │
-│            暗色企业级 UI · TailwindCSS 4 · Framer Motion      │
-│         React Flow 溯源图谱 · Recharts 数据图表               │
-├───────────┬───────────┬───────────┬───────────┬───────────────┤
-│   Auth    │    ERP    │    MES    │    WMS    │ Traceability  │
-│   模块    │    模块   │    模块   │    模块   │     模块       │
-│           │           │           │           │               │
-│ 登录/注册 │ 产品/BOM  │ 工单/报工 │ 物料/库存 │   全链路追溯   │
-│ RBAC 权限 │ 销售/采购 │ 工序管理  │ 出入库    │               │
-├───────────┴───────────┴───────────┴───────────┴───────────────┤
-│                     共享内核 (Shared Kernel)                    │
-│  PostgreSQL 18 · Redis 缓存 · JWT 认证 · 审计日志 · 分布式锁  │
-└──────────────────────────────────────────────────────────────┘
+                           ┌────────────────────────────────────────────────────────┐
+                           │                     前端 React 19 SPA                   │
+                           │       暗色 UI · TailwindCSS 4 · React Flow 溯源图谱      │
+                           └──────────────────────────┬─────────────────────────────┘
+                                                      │ (HTTP/RESTful)
+                                                      ▼
+                      ┌──────────────────────────────────────────────────────────────┐
+                      │                        Nginx 反向代理                         │
+                      └──────────────┬──────────────────────────────┬────────────────┘
+                                     │ (API Route 8080)             │ (API Route 8000)
+                                     ▼                              ▼
+                 ┌──────────────────────────────────────┐       ┌──────────────────────────────────────┐
+                 │       【Go 后端 (事件驱动版)】        │       │       【Python 后端 (经典业务版)】    │
+                 │   Gin · Uber Fx · Ent ORM · Casbin   │       │ FastAPI · SQLAlchemy · Alembic · JWT  │
+                 └──────────┬───────────┬───────────────┘       └──────────┬───────────┬───────────────┘
+                            │           │                                  │           │
+                     (Kafka)│           │(SQLite)                  (Celery)│           │(Postgres)
+                            ▼           ▼                                  ▼           ▼
+                      ┌───────────┐┌───────────┐                     ┌───────────┐┌───────────┐
+                      │Kafka 队列 ││ SQLite DB │                     │Celery(Redis) PostgreSQL│
+                      │ 异步处理  ││ (erp.db)  │                     │ PDF报表生成││ 主数据库  │
+                      └───────────┘└───────────┘                     └───────────┘└───────────┘
+                            ▲                                              ▲
+                            │ OpenTelemetry                                │ PDF 报表
+                            ▼                                              │
+                      ┌───────────┐                                  ┌───────────┐
+                      │ Jaeger    │                                  │ 本地储存  │
+                      │ Prometheus│                                  │  /reports │
+                      └───────────┘                                  └───────────┘
 ```
 
-## 核心功能模块
+### 2.1 Go 后端架构 (高并发事件驱动版)
 
-### ERP 模块
+Go 后端以 **高吞吐量、低延迟、松耦合、可观测性** 为设计导向，采用 Clean Architecture（清洁/六边形架构）分层，并融入了 DDD（领域驱动设计）的思想：
+*   **Web 框架**：[Gin 1.12](https://github.com/gin-gonic/gin) 高性能路由路由和中间件调度。
+*   **控制反转/依赖注入**：[Uber Fx v1.24](https://github.com/uber-go/fx) 进行应用的生命周期管理，提供干净的组件依赖注入和启动/停止钩子。
+*   **ORM 框架**：[Ent ORM v0.14](https://entgo.io/)，Schema-as-Code，类型安全，内置强类型的外键与实体关系，支持自动生成建表语句与变更。
+*   **消息中间件**：[Kafka-go v0.4](https://github.com/segmentio/kafka-go) 进行模块解耦。MES 完成报工后，直接向 `mes.production.completed` 队列发送领域事件，由 WMS 异步订阅并扣减原料库存，保障高并发下的削峰填谷。
+*   **数据库**：纯 Go 实现的 SQLite（`modernc.org/sqlite`），无需 CGO 依赖，支持快速启动与轻量部署。
+*   **细粒度权限控制**：[Casbin v2](https://github.com/casbin/casbin) 基于域（Domain）的多租户 RBAC 权限控制，采用 Ent ORM 数据适配器，权限多对多持久化。
+*   **可观测性**：全面集成 OpenTelemetry (OTel)。Gin 路由自动植入 Tracing 中间件，向 **Jaeger** 汇报全链路 Trace，同时注册 Prometheus Exporter，在 `/metrics` 暴露实时 QPS、延迟和系统指标。
 
-- **产品管理**：成品基础数据 CRUD，含编码、名称、价格、单位
-- **BOM 物料清单**：定义产品的物料配方，支持多版本管理，一键激活/废弃
-- **销售订单**：从下单到发货的全流程管理（草稿 → 确认 → 生产 → 待发货 → 已发货）
-- **供应商管理**：供应商信息维护，支持黑名单状态
-- **采购订单**：原料采购管理，含明细行和收货跟踪
+### 2.2 Python 后端架构 (经典业务/异步报表版)
 
-### MES 模块
+Python 后端以 **业务开发敏捷性、强大的报表生态、同步事务一致性** 为导向：
+*   **Web 框架**：[FastAPI 0.104](https://fastapi.tiangolo.com/) 异步 ASGI 框架，自动生成 Swagger 交互式接口文档。
+*   **ORM 框架**：[SQLAlchemy 2.0](https://www.sqlalchemy.org/) 声明式模型，强大的连接池管理与行级锁支持。
+*   **数据库**：[PostgreSQL 18-alpine](https://www.postgresql.org/) 提供高可用的关系型主数据存储。
+*   **数据库迁移**：[Alembic](https://alembic.sqlalchemy.org/) 进行版本化数据库演进。
+*   **异步任务队列**：[Celery](https://docs.celeryq.dev/) 以 [Redis](https://redis.io/) 作为 Broker & Backend，处理高耗时的财务报表 PDF 异步渲染任务。
+*   **报表渲染引擎**：[ReportLab](https://www.reportlab.com/) 专业级 PDF 渲染，集成思源黑体（wqy-microhei）开源中文字体，彻底规避 PDF 中文乱码和缺字问题。
 
-- **生产工单**：工单创建、状态流转（计划 → 未开始 → 进行中 → 完成 → 关闭）
-- **工序管理**：定义生产步骤和顺序，跟踪每道工序状态
-- **生产报工**：核心联动逻辑——扣减原料库存、增加成品库存、自动生成溯源记录
+### 2.3 共享前端 (React 19 SPA)
 
-### WMS 模块
+*   **框架与构建工具**：[React 19](https://react.dev/) + [TypeScript 6](https://www.typescriptlang.org/) + [Vite 8](https://vite.dev/)，享受极速热更新和零冗余的生产打包。
+*   **设计系统**：[TailwindCSS 4](https://tailwindcss.com/)，原子化暗色系企业级 UI，具有优异的响应式能力。
+*   **动效展示**：[Framer Motion](https://www.framer.com/motion/) 为页面跳转、弹窗、表单交互提供丝滑的微交互动画。
+*   **图谱可视化**：[@xyflow/react (React Flow 12)](https://reactflow.dev/) 用于渲染成品至原料的全链路追溯拓扑图（DAG）。
+*   **数据大屏图表**：[Recharts 3.8](https://recharts.org/) 响应式图表组件库。
+*   **大数据列表**：[react-virtuoso](https://virtuoso.dev/) 虚拟列表，支持万级物料库存数据的高性能滚动。
 
-- **物料管理**：物料基础数据 CRUD，含安全库存设置
-- **库存管理**：实时库存查询、批次管理、库位管理
-- **入库/出库**：物料出入库操作，行级锁防并发
-- **库存盘点**：盘点调整，自动生成差异变动日志
-- **库存变动日志**：所有操作留痕，支持按单据追溯
+---
 
-### 溯源模块
+## 3. 核心业务流程与联动逻辑
 
-- **全链路追溯**：从成品反查原料批次、生产工单、供应商信息，React Flow 可视化图谱
+系统打通了**销售到交付**、**采购到入库**两个最核心的制造业闭环，并由**批次溯源**完成透明化的监控。
 
-### 系统模块
+### 3.1 销售到交付流程 (Order-to-Delivery)
 
-- **用户管理**：基于角色的权限控制（RBAC），5 种预设角色
-- **操作审计**：所有写操作记录审计日志，含变更前后值
-- **仪表盘**：系统数据概览，Recharts 图表展示
-
-## 技术栈
-
-### 后端
-
-| 类别  | 技术                      | 说明                     |
-| --- | ----------------------- | ---------------------- |
-| 框架  | FastAPI 0.104           | 异步 Python Web 框架       |
-| ORM | SQLAlchemy 2.0          | 声明式模型 + 连接池管理          |
-| 数据库 | PostgreSQL 18           | 主数据存储                  |
-| 缓存  | Redis 5.0               | 缓存 + 分布式锁              |
-| 认证  | JWT (python-jose)       | HS256 签名，Token 有效期 24h |
-| 密码  | bcrypt + passlib        | 哈希加密                   |
-| 迁移  | Alembic                 | 数据库版本管理                |
-| 日志  | Loguru                  | 结构化日志，500MB 轮转         |
-| 测试  | pytest + pytest-asyncio | 单元测试 + 异步测试            |
-
-### 前端
-
-| 类别   | 技术                      | 说明           |
-| ---- | ----------------------- | ------------ |
-| 框架   | React 19 + TypeScript 6 | 类型安全的 SPA    |
-| 构建   | Vite 8                  | 开发热更新 + 生产构建 |
-| UI   | TailwindCSS 4           | 原子化 CSS      |
-| 动画   | Framer Motion           | 页面过渡动画       |
-| 图表   | Recharts 3.8            | 数据可视化        |
-| 图谱   | @xyflow/react 12        | 溯源关系图谱       |
-| 虚拟列表 | react-virtuoso          | 大数据量高性能滚动    |
-| HTTP | Axios                   | API 请求封装     |
-| 路由   | React Router DOM 7      | 客户端路由        |
-| 通知   | sonner                  | Toast 通知     |
-| 图标   | lucide-react            | 图标库          |
-
-### 部署
-
-- **容器化**：Docker + Docker Compose
-- **反向代理**：Nginx（前端静态资源 + API 反向代理）
-- **生产配置**：资源限制 + 副本部署 + 健康检查
-
-## 快速开始
-
-### 开发环境
-
-1. **启动基础设施**
-   
-   ```bash
-   docker-compose up -d postgres redis
-   ```
-
-2. **启动后端**
-   
-   ```bash
-   cd backend
-   python -m venv venv
-   # Windows
-   venv\Scripts\activate
-   # Linux/Mac
-   source venv/bin/activate
-   
-   pip install -r requirements.txt
-   cp .env.example .env  # 修改配置
-   alembic upgrade head  # 执行数据库迁移
-   python seed.py        # 初始化种子数据
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-   ```
-
-3. **启动前端**
-   
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-4. **访问系统**
-   
-   - 前端：http://localhost:5173
-   - 后端 API：http://localhost:8000
-   - API 文档：http://localhost:8000/docs
-
-### 默认账号
-
-| 用户名      | 密码     | 角色                | 权限范围   |
-| -------- | ------ | ----------------- | ------ |
-| admin    | 123456 | 管理员 (ADMIN)       | 全部模块   |
-| erp_user | 123456 | ERP 用户 (ERP_USER) | ERP 模块 |
-| mes_user | 123456 | MES 用户 (MES_USER) | MES 模块 |
-| wms_user | 123456 | WMS 用户 (WMS_USER) | WMS 模块 |
-
-### 生产环境
-
-```bash
-# 复制并修改生产配置
-cp .env.production .env
-# 修改 .env 中的密码和密钥
-
-# 启动全栈
-docker-compose -f docker-compose.prod.yml up -d --build
+```
+        ERP 模块                       MES 模块                       WMS 模块
+  ┌──────────────────┐           ┌──────────────────┐           ┌──────────────────┐
+  │  创建销售订单    │           │                  │           │                  │
+  │     (DRAFT)      │           │                  │           │                  │
+  └────────┬─────────┘           │                  │           │                  │
+           │                     │                  │           │                  │
+           ▼                     │                  │           │                  │
+  ┌──────────────────┐           │                  │           │                  │
+  │  确认销售订单    ├──────────►│  自动创建工单    │           │                  │
+  │    (APPROVED)    │           │    (PLANNED)     │           │                  │
+  └──────────────────┘           └────────┬─────────┘           │                  │
+                                          │                     │                  │
+                                          ▼                     │                  │
+                                 ┌──────────────────┐           │                  │
+                                 │   下达开始生产   │           │                  │
+                                 │  (IN_PROGRESS)   │           │                  │
+                                 └────────┬─────────┘           │                  │
+                                          │                     │                  │
+                                          ▼                     │                  │
+                                 ┌──────────────────┐           │  扣减原材料库存  │
+                                 │   生产完工报工   ├──────────►│  增加成品库存    │
+                                 │   (扫描条码)     │ (事件/事务│  写入变更日志    │
+                                 └────────┬─────────┘    联动)  └──────────────────┘
+                                          │                               ▲
+                                          ▼                               │
+                                 ┌──────────────────┐                     │
+                                 │   工单全部完成   │                     │
+                                 │   (COMPLETED)    │                     │
+                                 └────────┬─────────┘                     │
+                                          │                               │
+                                          ▼                               │
+  ┌──────────────────┐           ┌──────────────────┐                     │
+  │   订单置为待发货 ├──────────►│     发货出库     ├─────────────────────┘
+  │  (READY_TO_SHIP) │           │     (SHIPPED)    │      (成品库存核销)
+  └──────────────────┘           └──────────────────┘
 ```
 
-### 环境变量
+### 3.2 生产与库存联动逻辑
 
-| 变量名                           | 默认值            | 说明                            |
-| ----------------------------- | -------------- | ----------------------------- |
-| `ENVIRONMENT`                 | `development`  | 运行环境：development / production |
-| `SECRET_KEY`                  | `CHANGE_ME...` | JWT 签名密钥（生产必须修改）              |
-| `POSTGRES_SERVER`             | `localhost`    | 数据库地址                         |
-| `POSTGRES_PORT`               | `5434`         | 数据库端口（开发环境映射）                 |
-| `POSTGRES_USER`               | `admin`        | 数据库用户                         |
-| `POSTGRES_PASSWORD`           | `password`     | 数据库密码                         |
-| `POSTGRES_DB`                 | `erp_system`   | 数据库名                          |
-| `REDIS_HOST`                  | `localhost`    | Redis 地址                      |
-| `REDIS_PORT`                  | `6379`         | Redis 端口                      |
-| `REDIS_PASSWORD`              | _(空)_          | Redis 密码（生产环境设置）              |
-| `CORS_ORIGINS`                | `["*"]`        | 允许的跨域来源                       |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440`         | Token 过期时间（分钟）                |
+报工联动是本系统的核心，支持同步与异步两种处理模式：
+1.  **同步模式 (Python)**：报工接口内开启数据库局部事务，扣减原料库存，若原料不足则触发 `SQLAlchemy` 事务回滚，报工失败。
+2.  **异步模式 (Go + Kafka)**：
+    *   车间报工时，MES 启动事务，锁工单记录，校验生产状态后在数据库内累加报工数量并写入生产批次记录。
+    *   MES 事务提交成功后，向 Kafka 发送 `ProductionCompletedEvent`。
+    *   WMS 模块的 `EventSubscriber` 订阅 Kafka 消息，拉取事件。
+    *   WMS 检验消费幂等性。若通过，则启动 WMS 局部事务，加行锁读取库存，计算库存扣减。若扣减成功，则提交事务并 ACK 消息；若库存不足或更新失败，则不 ACK，触发重试与死信告警。
 
-## 数据库表结构
+### 3.3 采购到入库流程 (Procure-to-Pay)
 
-### ER 关系图
+```
+        ERP 采购管理                      WMS 仓储管理
+  ┌──────────────────────┐          ┌──────────────────────┐
+  │   创建原材料采购单   │          │                      │
+  │       (DRAFT)        │          │                      │
+  └──────────┬───────────┘          │                      │
+             │                      │                      │
+             ▼                      │                      │
+  ┌──────────────────────┐          │                      │
+  │    采购单确认下发    │          │                      │
+  │     (CONFIRMED)      │          │                      │
+  └──────────┬───────────┘          │                      │
+             │                      │                      │
+             └─────────────────────►│    供应商物料入库    │
+                                    │   (指定库位/批次号)  │
+                                    └──────────┬───────────┘
+                                               │
+                                               ▼
+                                    ┌──────────────────────┐
+                                    │     更新原料库存     │
+                                    │    记录库存收货日志  │
+                                    └──────────────────────┘
+```
+
+### 3.4 全链路溯源图谱 (Traceability Map)
+
+系统基于 React Flow 构建了从成品到原料采购的树形有向无环图（DAG），实现全链路追溯：
+
+```
+                    ┌─────────────────────────┐
+                    │      成品批次条码       │ (扫描成品包装二维码)
+                    └────────────┬────────────┘
+                                 │
+                                 ▼
+                    ┌─────────────────────────┐
+                    │      MES 生产工单       │ (追溯报工人员、质检结果)
+                    └────┬────────────────┬───┘
+                         │                │
+                         ▼                ▼
+           ┌───────────────────┐    ┌───────────────────┐
+           │   工序1 (SMT贴片) │    │   工序2 (外壳组装)│ (工艺流程追踪)
+           └───────────────────┘    └───────────────────┘
+                         │                │
+                         ▼                ▼
+           ┌───────────────────┐    ┌───────────────────┐
+           │  原料批次A: 芯片  │    │  原料批次B: 外壳  │ (库存批次追踪)
+           └─────────┬─────────┘    └─────────┬─────────┘
+                     │                        │
+                     ▼                        ▼
+           ┌───────────────────┐    ┌───────────────────┐
+           │ 采购单: PO-001923 │    │ 采购单: PO-001924 │ (采购链追溯)
+           └─────────┬─────────┘    └─────────┬─────────┘
+                     │                        │
+                     ▼                        ▼
+           ┌───────────────────┐    ┌───────────────────┐
+           │ 供应商: 英飞凌科技│    │ 供应商: 塑胶电子厂│ (源头企业追溯)
+           └───────────────────┘    └───────────────────┘
+```
+
+---
+
+## 4. 设计深度剖析 (Deep Dives)
+
+### 4.1 并发与数据一致性控制
+
+在高并发的生产报工与库存出库场景中，若无并发保护，会导致**库存扣减为负数**（库存超扣）或者**数据库死锁**。系统实施了多层并发防护机制：
+
+#### 4.1.1 Redis 预扣减 (Lua 脚本)
+在 Go 版本的 WMS 中，在高并发流量进入数据库前，首先使用 Redis 执行 Lua 脚本进行原子扣减，减轻底层数据库的 I/O 压力：
+```lua
+local stock = redis.call("GET", KEYS[1])
+if stock == false then
+    return -1
+end
+local qty = tonumber(stock)
+local deduct = tonumber(ARGV[1])
+if qty >= deduct then
+    redis.call("DECRBY", KEYS[1], deduct)
+    return 1 -- 扣减成功
+else
+    return 0 -- 库存不足
+end
+```
+如果在数据库最终持久化时发生异常，系统会执行补偿操作（调用 Redis `INCRBY` 加回扣减的值），确保 Redis 缓存与数据库的最终一致性。
+
+#### 4.1.2 悲观行锁 (SELECT FOR UPDATE)
+在最终落地更新时，Go 的 Ent ORM 与 Python 的 SQLAlchemy 均使用 `SELECT ... FOR UPDATE` 悲观锁锁住对应的主键或外键库存记录：
+*   **Go (Ent ORM)**:
+    ```go
+    inv, err := tx.Inventory.Query().
+        Where(inventory.HasMaterialWith(material.ID(materialID))).
+        Modify(func(s *sql.Selector) { s.ForUpdate() }). // 注入悲观锁
+        First(ctx)
+    ```
+*   **Python (SQLAlchemy)**:
+    ```python
+    inventory = db.query(Inventory).filter(
+        Inventory.material_id == material_id
+    ).with_for_update().first() # 独占行锁
+    ```
+这样保证了当有多个线程同时对同一批次/物料进行出入库操作时，必须排队等待，完美消除脏写风险。
+
+#### 4.1.3 版本号乐观锁
+除了悲观行锁，WMS 的库存记录表中还引入了 `version` 版本号字段。每次更新库存时，版本号自动累加。如果更新时的版本号与读取时的不匹配，则判定为冲突，事务回滚并向客户端抛出 `ErrConcurrentUpdate`，指导前端进行退避重试。
+
+### 4.2 接口与操作的幂等性设计
+
+为防范因网络抖动引起的前端重复提交，以及 Kafka 的 "At-least-once"（至少一次）消息投递规范所造成的重复消费扣减，系统在关键业务线中集成了 Redis 幂等拦截器：
+
+#### 4.2.1 车间报工幂等防重扫
+车间工人在手持 PDA 扫描成品条码报工时，系统会基于 `Barcode` 提取唯一的幂等 Key。Go 后端的 `IdempotentChecker` 利用 Redis 的原子指令 `SETNX` 锁定该条码 24 小时：
+```go
+func (c *IdempotentChecker) CheckAndSet(ctx context.Context, uniqueKey string, ttl time.Duration) error {
+    success, err := c.rdb.SetNX(ctx, uniqueKey, "1", ttl).Result()
+    if err != nil { return err }
+    if !success { return ErrIdempotentConflict }
+    return nil
+}
+```
+如果在业务处理（如写库、发 Kafka）中途出错，则主动调用 `Clear` 清除 Key，允许工人重试扫描。若成功，则持续锁定，防范二次扫描造成库存重复增加。
+
+#### 4.2.2 WMS 消费者去重
+WMS 订阅 Kafka 事件时，同样在消费端入口以 `event.EventID` 作为键执行 `CheckAndSet`。如该事件已被消费，则立即提交 Offset 并跳过，绝不重复扣减库存。
+
+### 4.3 BOM 物料防循环引用算法
+
+BOM (物料清单) 具有父子树状嵌套结构，其实质是有向无环图 (DAG)。如果用户在配置 BOM 时不慎设置了循环引用（例如：A 产品的原料需要 B，B 的原料需要 C，而 C 的原料又配了 A），会导致无限循环递归，最终引发系统内存溢出崩溃。
+
+在 `material_service.go` 中，向 parent 节点挂载 child 节点之前，系统通过 **BFS（广度优先搜索）向上追溯** 的图遍历算法，校验是否存在环路：
+```go
+// 向上 BFS 校验是否有环：如果 childID 可向上追溯到达 parentID，则代表有环，拒绝添加
+visited := map[int]bool{}
+queue := []int{parentID}
+
+for len(queue) > 0 {
+    curr := queue[0]
+    queue = queue[1:]
+
+    if curr == childID {
+        return dto.ErrBOMCycleDetected // 发现环路，抛出异常
+    }
+    if visited[curr] { continue }
+    visited[curr] = true
+
+    // 递归查询当前节点的所有父节点ID并加入队列
+    parents, err := s.db.Material.Query().
+        Where(material.ID(curr)).
+        QueryParent().
+        IDs(ctx)
+    if err != nil { return err }
+    queue = append(queue, parents...)
+}
+```
+
+### 4.4 RBAC 权限模型与 Casbin 控制
+
+本系统设计了基于角色的访问控制模型（RBAC），支持 5 种预设角色：
+*   `ADMIN` (系统管理员)：具有全功能读写及系统维护权限。
+*   `ERP_USER` (ERP操作员)：可进行产品管理、BOM定义、订单、供应商维护。
+*   `MES_USER` (MES操作员)：可查看生产任务、启动工单、扫描报工。
+*   `WMS_USER` (WMS操作员)：可执行库存盘点、货位调整、出入库确认。
+
+#### 4.4.1 Go 的 Casbin 域权限控制
+Go 后端采用基于域（Domain）的多租户 Casbin RBAC 模型（`r = sub, dom, obj, act`），定义如下：
+*   `sub`：主体（即角色，如 `ERP_USER`）
+*   `dom`：域（如 `tenant1`，为系统未来的多组织架构设计预留）
+*   `obj`：资源路径（如 `/api/v1/erp/sales-orders`）
+*   `act`：操作动作（HTTP 请求方法，如 `POST`, `GET`）
+
+在 Gin 路由组中应用 `Authz(enforcer, log)` 中间件，自动根据 JWT Token 中解析出来的用户 Role 结合当前请求的 Path 和 Method 进行 Casbin 决策验证。
+
+#### 4.4.2 Python 的细粒度权限依赖注入
+Python 后端在接口定义处使用依赖注入进行拦截控制：
+```python
+@router.post("/products")
+def create_product(
+    request: ProductCreate,
+    current_user: User = Depends(require_roles(["ADMIN", "ERP_USER"]))
+):
+    ...
+```
+如当前用户的角色非 ADMIN 或指定角色，FastAPI 自动抛出 `403 Forbidden`。
+
+### 4.5 Celery 异步任务与 ReportLab 中文 PDF 报表
+
+生成大型销售和财务数据报表是一项重度占用 CPU 和内存的操作，如果在 Web 线程同步生成，会导致服务器响应瞬间拉满。Python 后端通过 Celery 框架将其彻底移入后台：
+
+*   **架构**：以 Redis 作为 Broker，在 Worker 进程中拉取订单及产品数据。
+*   **ReportLab 渲染**：利用 `SimpleDocTemplate`，根据财务格式动态拼接 Paragraph、Spacer 和带有 `TableStyle` 的数据表格。
+*   **思源中文处理**：默认的 ReportLab 仅支持英文 Helvetica 等字体。系统自动加载 `/usr/share/fonts/truetype/wqy/wqy-microhei.ttc` 等中文矢量字体，注册为 `"ChineseFont"` 并应用于所有 ParagraphStyle 样式，在报表中完美渲染中文。
+*   **指数退避重试**：任务配置了自动指数退避重试机制，当数据库发生短暂连接闪断时，系统会自动进行多次延时重试，大大提升系统健壮性：
+    ```python
+    @celery_app.task(
+        bind=True,
+        max_retries=3,
+        autoretry_for=(Exception,),
+        retry_backoff=True, # 启用指数退避
+        retry_backoff_max=60
+    )
+    ```
+
+### 4.6 可观测性系统 (Jaeger Trace + Prometheus Metrics)
+
+Go 后端原生地集成了 OpenTelemetry 规范：
+
+*   **Jaeger 分布式追踪**：
+    *   在 `tracer.go` 中初始化 `TracerProvider`。
+    *   在 Gin 中安装 `otelgin.Middleware` 中间件，自动为每个传入的 HTTP 请求生成 TraceID 并注入 Context。
+    *   利用 OTel 的 Span 跟踪，将 HTTP 路由处理、服务层逻辑、Ent 数据库 SQL 查询的耗时紧密串联，直观定位耗时瓶颈。
+*   **Prometheus 业务指标监控**：
+    *   利用 `otel/exporters/prometheus` 初始化 Meter，在 Gin 侧挂载 `/metrics` 路径。
+    *   向 Prometheus 暴露系统的核心运行时状态，便于使用 Grafana 展现高大上的运维仪表盘。
+
+---
+
+## 5. 数据库设计与实体关系 (ERD)
+
+### 5.1 ER 关系图
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
@@ -248,438 +456,334 @@ docker-compose -f docker-compose.prod.yml up -d --build
        │                      └───────────────────────┘
        │
        ▼
-┌──────────────────┐     ┌─────────────────────┐
-│ traceability_    │     │ erp_purchase_       │
-│ records          │     │ orders              │
-│ (溯源记录)       │     │ (采购订单)          │
-│                  │     │                     │
-│ source_type/id   │     │ supplier_id ────────┼──► erp_suppliers
-│ target_type/id   │     │ status              │
-│ work_order_id    │     └─────────┬───────────┘
-│ action_type      │               │
-└──────────────────┘     ┌─────────┘
-                         ▼
-              ┌──────────────────────┐
-              │ erp_purchase_order_  │
-              │ items                │
-              │ (采购明细)           │
-              │ material_id          │
-              │ quantity / received  │
-              └──────────────────────┘
+ ┌──────────────────┐     ┌─────────────────────┐
+ │ traceability_    │     │ erp_purchase_       │
+ │ records          │     │ orders              │
+ │ (溯源记录)       │     │ (采购订单)          │
+ │                  │     │                     │
+ │ source_type/id   │     │ supplier_id ────────┼──► erp_suppliers
+ │ target_type/id   │     │ status              │
+ │ work_order_id    │     └─────────┬───────────┘
+ │ action_type      │               │
+ └──────────────────┘     ┌─────────┘
+                          ▼
+               ┌──────────────────────┐
+               │ erp_purchase_order_  │
+               │ items                │
+               │ (采购明细)           │
+               │ material_id          │
+               │ quantity / received  │
+               └──────────────────────┘
 
-┌──────────────┐     ┌───────────────────┐     ┌──────────────────┐
-│ auth_users   │     │ system_audit_logs │     │ wms_warehouse_   │
-│ (用户)       │     │ (审计日志)        │     │ locations        │
-│              │     │                   │     │ (库位)           │
-│ username     │     │ user_id / action  │     │                  │
-│ role         │     │ module / resource │     │ warehouse_code   │
-│ is_active    │     │ old/new_value     │     │ zone/shelf/layer │
-└──────────────┘     └───────────────────┘     └──────────────────┘
+ ┌──────────────┐     ┌───────────────────┐     ┌──────────────────┐
+ │ auth_users   │     │ system_audit_logs │     │ wms_warehouse_   │
+ │ (用户)       │     │ (审计日志)        │     │ (库位)           │
+ │              │     │                   │     │                  │
+ │ username     │     │ user_id / action  │     │ warehouse_code   │
+ │ role         │     │ module / resource │     │ zone/shelf/layer │
+ │ is_active    │     │ old/new_value     │     └──────────────────┘
+ └──────────────┘     └───────────────────┘
 ```
 
-### 表清单
+### 5.2 核心数据表清单
 
-| 表名                           | 模块           | 说明          |
-| ---------------------------- | ------------ | ----------- |
-| `auth_users`                 | Auth         | 用户表，RBAC 角色 |
-| `erp_products`               | ERP          | 成品表         |
-| `erp_boms`                   | ERP          | BOM 物料清单主表  |
-| `erp_bom_items`              | ERP          | BOM 子件明细    |
-| `erp_sales_orders`           | ERP          | 销售订单        |
-| `erp_suppliers`              | ERP          | 供应商         |
-| `erp_purchase_orders`        | ERP          | 采购订单        |
-| `erp_purchase_order_items`   | ERP          | 采购订单明细      |
-| `mes_work_orders`            | MES          | 生产工单        |
-| `mes_work_order_processes`   | MES          | 工单工序        |
-| `wms_materials`              | WMS          | 物料表         |
-| `wms_inventories`            | WMS          | 库存表（行级锁防并发） |
-| `wms_inventory_transactions` | WMS          | 库存变动日志      |
-| `wms_warehouse_locations`    | WMS          | 库位表         |
-| `traceability_records`       | Traceability | 溯源记录        |
-| `system_audit_logs`          | System       | 审计日志        |
-
-### 并发控制
-
-系统在关键业务操作中使用 **行级锁**（`SELECT ... FOR UPDATE`）防止并发问题：
-
-- **生产报工**：锁工单 + 锁原料库存 + 锁成品库存，防止报工并发导致库存超扣
-- **出库操作**：锁库存记录，防止并发出库导致负库存
-- **库存盘点**：锁库存记录，防止盘点期间发生出入库
-- **分布式锁**：Redis 实现的 `DistributedLock`，用于跨进程互斥
-
-## API 端点清单
-
-### Auth `/api/v1/auth`
-
-| Method | Path        | 说明       |
-| ------ | ----------- | -------- |
-| POST   | `/login`    | 登录       |
-| POST   | `/register` | 注册       |
-| GET    | `/me`       | 获取当前用户信息 |
-
-### ERP `/api/v1/erp`
-
-| Method         | Path                         | 说明          |
-| -------------- | ---------------------------- | ----------- |
-| GET/POST       | `/products`                  | 产品列表/创建     |
-| GET/PUT/DELETE | `/products/{id}`             | 产品详情/编辑/删除  |
-| GET/POST       | `/boms`                      | BOM 列表/创建   |
-| GET            | `/boms/{id}`                 | BOM 详情      |
-| POST           | `/boms/{id}/activate`        | 激活 BOM      |
-| GET/POST       | `/sales-orders`              | 销售订单列表/创建   |
-| GET/PUT        | `/sales-orders/{id}`         | 订单详情/编辑     |
-| POST           | `/sales-orders/{id}/confirm` | 确认订单        |
-| POST           | `/sales-orders/{id}/ship`    | 发货          |
-| POST           | `/sales-orders/{id}/cancel`  | 取消          |
-| GET/POST       | `/suppliers`                 | 供应商列表/创建    |
-| GET/PUT/DELETE | `/suppliers/{id}`            | 供应商详情/编辑/删除 |
-| GET/POST       | `/purchase-orders`           | 采购订单列表/创建   |
-| GET            | `/purchase-orders/{id}`      | 采购订单详情      |
-
-### MES `/api/v1/mes`
-
-| Method   | Path                          | 说明   |
-| -------- | ----------------------------- | ---- |
-| GET      | `/work-orders`                | 工单列表 |
-| GET      | `/work-orders/{id}`           | 工单详情 |
-| POST     | `/work-orders/{id}/start`     | 开始生产 |
-| POST     | `/work-orders/{id}/report`    | 生产报工 |
-| POST     | `/work-orders/{id}/complete`  | 完成工单 |
-| POST     | `/work-orders/{id}/close`     | 关闭工单 |
-| GET/POST | `/work-orders/{id}/processes` | 工序管理 |
-
-### WMS `/api/v1/wms`
-
-| Method         | Path                      | 说明         |
-| -------------- | ------------------------- | ---------- |
-| GET/POST       | `/materials`              | 物料列表/创建    |
-| GET/PUT/DELETE | `/materials/{id}`         | 物料详情/编辑/删除 |
-| GET            | `/inventory`              | 库存查询       |
-| POST           | `/materials/receive`      | 入库         |
-| POST           | `/materials/dispatch`     | 出库         |
-| POST           | `/inventory/stocktake`    | 库存盘点       |
-| GET            | `/inventory/transactions` | 库存变动日志     |
-| GET/POST       | `/locations`              | 库位管理       |
-
-### System `/api/v1/system`
-
-| Method | Path               | 说明    |
-| ------ | ------------------ | ----- |
-| GET    | `/dashboard/stats` | 仪表盘统计 |
-| GET    | `/audit-logs`      | 操作日志  |
-| GET    | `/users`           | 用户管理  |
-
-## 项目结构
-
-```
-ERP–MES–WMS 联动的系统/
-├── docker-compose.yml              # 开发环境
-├── docker-compose.prod.yml         # 生产环境（资源限制 + 副本部署）
-├── images/                         # 系统截图
-├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── alembic/                    # 数据库迁移
-│   │   ├── env.py                  # 迁移环境配置
-│   │   └── versions/               # 迁移版本文件
-│   ├── app/
-│   │   ├── main.py                 # FastAPI 入口 + 中间件 + 路由注册
-│   │   ├── core/                   # 共享内核
-│   │   │   ├── config.py           # Pydantic Settings 配置管理
-│   │   │   ├── database.py         # SQLAlchemy 引擎 + 会话工厂
-│   │   │   ├── models.py           # TimestampMixin 时间戳基类
-│   │   │   ├── redis.py            # Redis 缓存 + 分布式锁
-│   │   │   └── constants.py        # 业务状态常量（防魔法字符串）
-│   │   └── apps/                   # 业务模块（按领域划分）
-│   │       ├── auth/               # 认证授权
-│   │       │   ├── models.py       #   User 模型
-│   │       │   ├── router.py       #   登录/注册/获取用户
-│   │       │   ├── schemas.py      #   Pydantic 请求/响应模型
-│   │       │   ├── dependencies.py #   RBAC 依赖注入（require_roles）
-│   │       │   └── utils.py        #   JWT + 密码哈希工具
-│   │       ├── erp/                # ERP 模块
-│   │       │   ├── models.py       #   Product/BOM/SalesOrder/Supplier/PurchaseOrder
-│   │       │   ├── router.py       #   RESTful API 路由
-│   │       │   ├── schemas.py      #   请求/响应模型
-│   │       │   └── services.py     #   业务逻辑（订单确认→自动创建工单）
-│   │       ├── mes/                # MES 模块
-│   │       │   ├── models.py       #   WorkOrder/WorkOrderProcess
-│   │       │   ├── router.py       #   工单状态流转 API
-│   │       │   ├── schemas.py      #   请求/响应模型
-│   │       │   └── services.py     #   报工核心逻辑（三系统联动）
-│   │       ├── wms/                # WMS 模块
-│   │       │   ├── models.py       #   Material/Inventory/Transaction/Location
-│   │       │   ├── router.py       #   物料/库存 API
-│   │       │   ├── schemas.py      #   请求/响应模型
-│   │       │   └── services.py     #   出入库 + 盘点逻辑
-│   │       ├── traceability/       # 溯源模块
-│   │       │   ├── models.py       #   TraceabilityRecord
-│   │       │   └── router.py       #   溯源查询 API
-│   │       └── system/             # 系统模块
-│   │           ├── models.py       #   AuditLog
-│   │           ├── router.py       #   仪表盘/审计日志/用户管理
-│   │           └── schemas.py      #   请求/响应模型
-│   └── seed.py                     # 种子数据初始化
-└── frontend/
-    ├── Dockerfile
-    ├── nginx.conf                  # Nginx 配置（SPA 路由 + API 代理）
-    ├── package.json
-    └── src/
-        ├── App.tsx                 # 路由配置 + 鉴权守卫
-        ├── main.tsx                # React 入口
-        ├── index.css               # 全局样式 + TailwindCSS
-        ├── components/             # 公共组件
-        │   ├── Layout.tsx          #   侧边栏布局 + 导航
-        │   ├── InfoPanel.tsx        #   信息面板组件
-        │   └── TraceabilityGraph.tsx#   溯源图谱（React Flow）
-        ├── pages/                  # 页面组件
-        │   ├── Login.tsx           #   登录页
-        │   ├── Dashboard.tsx       #   仪表盘（数据概览 + 图表）
-        │   ├── ProductList.tsx     #   产品管理
-        │   ├── BOMList.tsx         #   BOM 物料清单
-        │   ├── SalesOrderList.tsx  #   销售订单
-        │   ├── SupplierList.tsx    #   供应商管理
-        │   ├── PurchaseOrderList.tsx#  采购订单
-        │   ├── WorkOrderList.tsx   #   生产工单
-        │   └── MaterialList.tsx    #   库存管理
-        ├── utils/                  # 工具函数
-        │   └── api.ts             #   Axios 实例 + 请求/响应拦截器
-        └── assets/                 # 静态资源
-```
-
-## 核心业务流程
-
-### 销售到交付（Order-to-Delivery）
-
-```
-创建销售订单 (DRAFT)
-    │
-    ▼
-确认订单 ──────────── 自动创建生产工单 (PLANNED)
-    │                     │
-    │                     ▼
-    │               开始生产 (IN_PROGRESS)
-    │                     │
-    │                     ▼
-    │               生产报工 ───┬── 扣减原料库存 (WMS)
-    │                          ├── 增加成品库存 (WMS)
-    │                          └── 写入溯源记录 (Traceability)
-    │                     │
-    │                     ▼
-    │               完成工单 (COMPLETED) → 订单状态变为 READY_TO_SHIP
-    │                     │
-    ▼                     ▼
-发货 (SHIPPED) ──── 扣减成品库存 (WMS)
-```
-
-### 采购到付款（Procure-to-Pay）
-
-```
-创建采购订单 (DRAFT)
-    │
-    ▼
-确认订单 (CONFIRMED)
-    │
-    ▼
-采购入库 ──── 增加原料库存 (WMS) + 记录变动日志
-    │
-    ▼
-收货完成 (RECEIVED)
-```
-
-### 全链路追溯（Full Traceability）
-
-```
-成品条码/批次号
-    │
-    ▼
-溯源记录 (traceability_records)
-    │
-    ├──► 生产工单信息 (mes_work_orders)
-    │        │
-    │        └──► 工单工序 (mes_work_order_processes)
-    │
-    ├──► 原料批次信息 (source_barcode)
-    │        │
-    │        └──► 物料信息 (wms_materials)
-    │
-    └──► 供应商信息 (通过采购订单关联)
-```
-
-### 前端路由
-
-| 路径                     | 页面                | 说明        |
-| ---------------------- | ----------------- | --------- |
-| `/login`               | Login             | 登录页（无需鉴权） |
-| `/`                    | Dashboard         | 仪表盘，数据概览  |
-| `/erp/products`        | ProductList       | 产品管理      |
-| `/erp/boms`            | BOMList           | BOM 物料清单  |
-| `/erp/sales-orders`    | SalesOrderList    | 销售订单      |
-| `/erp/suppliers`       | SupplierList      | 供应商管理     |
-| `/erp/purchase-orders` | PurchaseOrderList | 采购订单      |
-| `/mes/work-orders`     | WorkOrderList     | 生产工单      |
-| `/wms/inventory`       | MaterialList      | 库存管理      |
-
-> 所有业务路由均需 JWT Token，未登录自动跳转 `/login`。
-
-## 开发规范
-
-### 代码风格
-
-- **Python**：snake_case 命名，完整类型注解，函数 < 50 行
-- **TypeScript**：camelCase 命名，严格类型，组件 PascalCase
-- **Git**：约定式提交（feat/fix/refactor/docs/test）
-
-### API 设计
-
-- RESTful 风格，统一 `/api/v1` 前缀
-- 统一错误响应格式：`{"code": 50000, "message": "...", "details": "..."}`
-- JWT Bearer Token 认证
-- RBAC 权限控制（`require_roles` 依赖注入）
-- 生产环境隐藏内部异常详情
-
-### 数据库
-
-- SQLAlchemy 2.0 声明式 ORM
-- Alembic 迁移管理，禁止手动改表
-- 连接池：pool_size=10, max_overflow=20, 30 分钟回收
-- 行级锁（`SELECT ... FOR UPDATE`）防并发
-- `TimestampMixin` 统一 created_at / updated_at
-
-### 模块结构
-
-每个业务模块遵循统一的四文件结构：
-
-```
-apps/<module>/
-├── models.py     # SQLAlchemy 模型定义
-├── schemas.py    # Pydantic 请求/响应模型
-├── router.py     # FastAPI 路由定义
-└── services.py   # 业务逻辑（可选）
-```
-
-## License
-
-MIT
-
-
-## RBAC 权限控制与 Celery 异步任务文档
-
-### 1. RBAC 权限控制模型
-
-本系统基于 **角色的访问控制 (RBAC)**，通过多对多关系关联用户 (User)、角色 (Role) 和权限 (Permission)。
-
-#### 1.1 数据库设计
-系统内置了以下四张核心表：
-- `auth_users`: 用户表，记录用户名、加密密码、激活状态等。
-- `auth_roles`: 角色表，包含 `ADMIN` (系统管理员), `ERP_USER` (ERP操作员), `MES_USER` (MES操作员), `WMS_USER` (WMS操作员)。
-- `auth_permissions`: 权限表，存储细粒度的权限，如 `admin:*`, `erp:read`, `erp:write`, `mes:read`, `mes:write`, `wms:read`, `wms:write`。
-- `role_permission`: 角色与权限的关联表 (多对多)。
-- `user_role`: 用户与角色的关联表 (多对多)。
-
-#### 1.2 默认角色与权限对应表
-| 角色 (Role) | 权限 (Permission) | 说明 |
+| 表名 | 模块 | 说明 |
 | :--- | :--- | :--- |
-| **ADMIN** | `admin:*` | 系统最高管理员，自动绕过所有权限检查 |
-| **ERP_USER** | `erp:read`, `erp:write` | ERP 系统的读写权限（管理产品、BOM、销售与采购订单等） |
-| **MES_USER** | `mes:read`, `mes:write` | MES 系统的读写权限（管理生产工单、工单报工与状态流转等） |
-| **WMS_USER** | `wms:read`, `wms:write` | WMS 系统的读写权限（管理物料、出入库、盘点等） |
+| `auth_users` | Auth | 用户表，存储登录凭证与 RBAC 角色关联 |
+| `auth_roles` | Auth | 角色表，与用户及权限多对多关联 |
+| `auth_permissions` | Auth | 细粒度操作权限表（如 `erp:write`, `wms:read`） |
+| `erp_products` | ERP | 成品物料基础数据表 |
+| `erp_boms` | ERP | BOM (物料清单) 主表，管理 BOM 版本和激活状态 |
+| `erp_bom_items` | ERP | BOM 明细表，定义父子物料消耗配比 |
+| `erp_sales_orders` | ERP | 销售订单表，驱动制造与仓储交付 |
+| `erp_suppliers` | ERP | 原料供应商资质数据表 |
+| `erp_purchase_orders` | ERP | 原料采购订单表，记录到货情况 |
+| `mes_work_orders` | MES | 生产工单表，指示车间排产与实绩 |
+| `mes_work_order_processes`| MES | 工单工序明细表，支持工单工序追踪 |
+| `wms_materials` | WMS | 原材料物料基础数据表 |
+| `wms_inventories` | WMS | 库存核心表，维护可用库存、锁库量、版本号（乐观锁） |
+| `wms_inventory_transactions`| WMS | 库存变动明细记录表，对账凭证 |
+| `wms_warehouse_locations` | WMS | 仓库库位表，按区、排、层精细化定位 |
+| `traceability_records` | Traceability | 追溯关系表，记录批次流转节点 |
+| `system_audit_logs` | System | 审计日志表，写操作修改值记录 |
 
-#### 1.3 权限拦截注入器使用示例
-在接口中使用 `Depends(require_permissions([...]))` (别名 `require_roles`) 进行权限控制。接口校验采用 **OR 逻辑**：用户拥有的角色名或具体权限名只要有一个命中，即允许访问（ADMIN 自动放行）。
+---
 
-```python
-from fastapi import APIRouter, Depends
-from app.apps.auth.dependencies import require_permissions as require_roles
-from app.apps.auth.models import User
+## 6. API 端点清单
 
-router = APIRouter()
+### 6.1 Go 后端 API 接口 (Gin)
 
-# 示例 1: 仅限 ADMIN 和 ERP_USER 访问
-@router.post("/products")
-def create_product(current_user: User = Depends(require_roles(["ADMIN", "ERP_USER"]))):
-    return {"message": "Success"}
+Go 后端暴露在 `8080` 端口下，主要接口：
 
-# 示例 2: 仅限拥有特定细粒度权限的成员访问
-@router.get("/sensitive-data")
-def read_sensitive(current_user: User = Depends(require_roles(["erp:write"]))):
-    return {"data": "Secret"}
+#### 6.1.1 认证接口 `/api/v1/auth`
+*   `POST /login` - 账号登录，发放 24 小时效期的 JWT。
+*   `GET /me` - 获取当前在线用户的身份和系统角色。
+
+#### 6.1.2 ERP 接口 `/api/v1/erp`
+*   `POST /materials` - 创建 ERP 原料/半成品基础数据。
+*   `POST /materials/:id/bom` - 向 parent ID 挂载子件，具备 BFS **循环依赖防护拦截**。
+*   `GET /materials/:id/bom` - 级联加载输出多级 BOM 树状拓扑结构。
+*   `POST /sales-orders` - 新建销售订单。
+*   `POST /sales-orders/:id/approve` - 审核订单并执行状态流转。
+*   `GET /sales-orders/:id` - 级联查询销售订单及其关联条目。
+
+#### 6.1.3 MES 接口 `/api/v1/mes`
+*   `POST /work-orders/:id/report` - 车间工人扫码报工。具有基于条码的 **Redis 幂等拦截**。
+
+#### 6.1.4 WMS 接口 `/api/v1/wms`
+*   `POST /inventory/deduct` - 执行物料库存扣减。接口支持 Redis Lua **预扣减与补偿设计** + 数据库 **SELECT FOR UPDATE 悲观行锁**。
+
+#### 6.1.5 系统监控端点
+*   `GET /metrics` - 暴露 Prometheus 监控指标。
+
+---
+
+### 6.2 Python 后端 API 接口 (FastAPI)
+
+Python 后端暴露在 `8000` 端口下，主要接口：
+
+#### 6.2.1 认证模块 `/api/v1/auth`
+*   `POST /login` - 登录并生成 JWT Bearer Token。
+*   `POST /register` - 新增用户注册并关联角色。
+*   `GET /me` - 获取用户详情。
+
+#### 6.2.2 ERP 模块 `/api/v1/erp`
+*   `GET/POST /products` - 查询成品列表/录入成品。
+*   `GET/PUT/DELETE /products/{id}` - 成品单体查询、编辑修改、删除。
+*   `GET/POST /boms` - BOM 物料清单查询与创建。
+*   `GET/PUT/DELETE /boms/{id}` - BOM 修改与注销。
+*   `POST /boms/{id}/activate` - 激活并启用选定 BOM。
+*   `GET/POST /sales-orders` - 销售订单查询/创建。
+*   `POST /sales-orders/{id}/confirm` - 确认订单（自动生成对应 MES 生产工单）。
+*   `POST /sales-orders/{id}/ship` - 订单成品出库发货（联动扣减成品库存）。
+*   `GET/POST /suppliers` - 供应商管理。
+*   `GET/POST /purchase-orders` - 原材料采购订单管理。
+*   `GET /reports/financial/{order_id}` - **触发 Celery 异步生成财务 PDF 报表**。
+*   `GET /reports/status/{task_id}` - 查询报表生成状态与下载链接。
+*   `GET /reports/download/{filename}` - 获取 PDF 报表文件流。
+
+#### 6.2.3 MES 模块 `/api/v1/mes`
+*   `GET /work-orders` - 查询生产工单列表。
+*   `POST /work-orders/{id}/start` - 生产工单下达开工，状态变为 `IN_PROGRESS`。
+*   `POST /work-orders/{id}/report` - 生产报工（扣减原料库存、增加成品库存、记录溯源）。
+*   `POST /work-orders/{id}/complete` - 生产工单完成，使对应的销售订单变为待发货 `READY_TO_SHIP`。
+*   `POST /work-orders/{id}/close` - 关闭工单。
+
+#### 6.2.4 WMS 模块 `/api/v1/wms`
+*   `GET/POST /materials` - 仓储原料及半成品管理。
+*   `GET /inventory` - 查询当前物料的可用与锁定库存。
+*   `POST /materials/receive` - 采购入库增加原料库存。
+*   `POST /materials/dispatch` - 生产领用出库。
+*   `POST /inventory/stocktake` - 发起库存盘点，行级锁防并发。
+*   `GET /inventory/transactions` - 审计全量库存收发变动流水。
+
+#### 6.2.5 追溯与系统模块 `/api/v1/system`
+*   `GET /dashboard/stats` - 获取仪表盘核心 KPI（订单数、产值、库存占比）。
+*   `GET /audit-logs` - 核心写操作审计日志查询。
+*   `GET /health` - 深度健康状态监测（PostgreSQL 和 Redis 联通性测试）。
+
+---
+
+## 7. 项目目录结构
+
+```
+ERP-MES-WMS-system/
+├── docker-compose.yml              # 开发联调环境 (Python + SPA + Redis + PG)
+├── docker-compose.prod.yml         # 生产发布环境 (Go + Kafka + Jaeger + Prom)
+├── Dockerfile                      # Go 后端的多阶段安全构建 Dockerfile
+├── go.mod                          # Go Module 依赖定义
+├── go.sum                          # Go 依赖校验
+├── ent/                            # Ent ORM Schema 架构文件
+│   └── schema/                     # 实体定义 (User, Inventory, WorkOrder等)
+├── configs/                        # 共享配置文件目录
+│   ├── config.yaml                 # Go 后端配置文件
+│   └── rbac_model.conf             # Casbin 权限模型定义 (r = sub, dom, obj, act)
+├── cmd/
+│   └── server/
+│       └── main.go                 # Go 服务启动入口 (加载 Fx, 启动 Gin + Consumer)
+├── internal/                       # Go 后端核心逻辑分层
+│   ├── config/                     # 配置加载器 (Viper)
+│   ├── infrastructure/             # 基础设施适配
+│   │   ├── cache/                  # Redis 缓存连接池与分布式锁提供
+│   │   ├── casbin/                 # Casbin Enforcer 初始化
+│   │   ├── db/                     # DB 引擎注入与自动 Migration 触发器
+│   │   ├── http/                   # Gin Engine 生命周期挂载
+│   │   ├── mq/                     # Kafka 生产者/消费者配置
+│   │   └── telemetry/              # OpenTelemetry (Jaeger/Prometheus 导出器)
+│   ├── pkg/                        # 共享公共包
+│   │   ├── core/                   # 幂等拦截器
+│   │   ├── events/                 # 跨模块消息定义
+│   │   ├── logger/                 # 结构化日志包装 (Zap)
+│   │   └── middleware/             # JWT, CORS, Casbin 拦截器
+│   └── modules/                    # 业务应用层模块 (Clean Architecture)
+│       ├── erp/                    # ERP 子域 (销售、物料、BOM树)
+│       ├── mes/                    # MES 子域 (生产、报工、Kafka事件生产)
+│       ├── wms/                    # WMS 子域 (库存扣减、Kafka事件消费)
+│       └── system/                 # 系统子域 (用户认证、后台数据字典)
+├── backend/                        # Python 后端项目
+│   ├── Dockerfile                  # Python 的多阶段构建文件
+│   ├── requirements.txt            # Python 依赖包 (FastAPI, SQLAlchemy, Celery等)
+│   ├── alembic.ini                 # Alembic 迁移配置文件
+│   ├── seed.py                     # 初始化数据库种子数据 (含5预设账户)
+│   ├── app/
+│   │   ├── main.py                 # FastAPI 入口
+│   │   ├── celery_app.py           # Celery 实例定义
+│   │   ├── core/                   # 数据库与缓存配置
+│   │   ├── apps/                   # Python 业务模块
+│   │   │   ├── auth/               # 认证模块 (含 JWT 验证、RBAC 依赖)
+│   │   │   ├── erp/                # ERP 业务服务与报表状态查询
+│   │   │   ├── mes/                # MES 业务服务
+│   │   │   └── wms/                # WMS 业务服务 (含盘点、货位)
+│   │   └── tasks/
+│   │       └── report.py           # Celery 报表任务 (集成中文字体与 ReportLab 渲染)
+│   └── tests/                      # 单元测试目录
+└── frontend/                       # 前端 React 项目
+    ├── Dockerfile                  # 前端容器化构建文件
+    ├── nginx.conf                  # 前端发布代理配置 (解决 SPA 路由直崩与 API 跨域)
+    ├── package.json                # 前端依赖配置 (React 19, React Flow, Tailwind 4)
+    └── src/
+        ├── App.tsx                 # 路由分发与未登录路由拦截守卫
+        ├── main.tsx                # 应用挂载入口
+        ├── components/             # 公共组件目录 (Layout, InfoPanel等)
+        └── pages/                  # 业务菜单页面 (控制台、溯源图、列表页)
 ```
 
 ---
 
-### 2. Celery 异步任务 (报表生成)
+## 8. 快速启动与部署指南
 
-系统集成 Celery 异步任务框架（Redis 作为 Broker 和 Backend 结果存储），实现耗时的财务报表 PDF 生成功能，防止阻塞 Web 主线程。
+### 8.1 基础设施部署
 
-#### 2.1 服务架构
-- **Broker & Backend**: `redis://localhost:6379/0`
-- **Worker 启动命令**: `celery -A app.celery_app worker --loglevel=info`
-- **PDF 生成库**: ReportLab (已集成 `fonts-wqy-microhei` 开源字体以完美支持中文 PDF 渲染，避免产生乱码)
+首先克隆代码，并在后台开启基础设施（PostgreSQL, Redis, Kafka, Zookeeper, Jaeger）：
 
-#### 2.2 报表任务 API 文档
+```bash
+# 进入项目根目录，启动开发环境所需设施 (Postgres + Redis)
+docker-compose up -d postgres redis
 
-##### 2.2.1 触发财务报告生成
-- **请求方法**: `GET`
-- **接口路径**: `/api/v1/erp/reports/financial/{order_id}`
-- **权限要求**: `ADMIN` 或 `ERP_USER`
-- **响应参数**:
-  ```json
-  {
-    "task_id": "8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719",
-    "status": "PENDING"
-  }
-  ```
+# 若测试生产环境 Go 端的 Kafka 联动，则运行：
+docker-compose -f docker-compose.prod.yml up -d postgres redis zookeeper kafka jaeger prometheus
+```
 
-##### 2.2.2 查询任务状态及下载链接
-- **请求方法**: `GET`
-- **接口路径**: `/api/v1/erp/reports/status/{task_id}`
-- **权限要求**: 需登录用户 (`get_current_user`)
-- **响应参数 (任务进行中/排队中)**:
-  ```json
-  {
-    "task_id": "8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719",
-    "status": "PENDING"
-  }
-  ```
-- **响应参数 (任务完成)**:
-  ```json
-  {
-    "task_id": "8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719",
-    "status": "SUCCESS",
-    "download_url": "/api/v1/erp/reports/download/financial_report_1_8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719.pdf"
-  }
-  ```
+### 8.2 Go 后端启动运行
 
-##### 2.2.3 下载生成的 PDF 报表
-- **请求方法**: `GET`
-- **接口路径**: `/api/v1/erp/reports/download/{filename}`
-- **权限要求**: 需登录用户 (`get_current_user`)
-- **响应**: PDF 文件流 (Response Content-Type: `application/pdf`)
+确保安装了 Go 1.21+，并保持本地的 Redis 和 Kafka 处于开启状态。
+
+```bash
+# 从根目录进入 Go 后端
+# 安装依赖
+go mod download
+
+# 启动 Go 服务 (默认开启 8080 端口，自动执行数据库 Schema 迁移并创建 erp.db)
+go run cmd/server/main.go
+```
+
+### 8.3 Python 后端与 Celery 启动运行
+
+确保具有 Python 3.10+ 环境。
+
+```bash
+cd backend
+# 创建并激活虚拟环境
+python -m venv venv
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+source venv/bin/activate
+
+# 安装依赖项
+pip install -r requirements.txt
+
+# 复制并配置本地环境变量
+cp .env.example .env
+
+# 执行数据库升级迁移 (根据 alembic 脚本自动建表)
+alembic upgrade head
+
+# 执行初始化种子数据 (插入默认产品、BOM、供应商以及 admin 等5个演示角色账户)
+python seed.py
+
+# 启动 Python FastAPI web 服务
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# -----------------
+# 开启后台 Celery 任务处理器 (另开一个终端窗口)
+# -----------------
+celery -A app.celery_app worker --loglevel=info
+```
+
+### 8.4 React 前端启动运行
+
+确保具有 Node.js 18+ 环境。
+
+```bash
+cd frontend
+# 安装所需依赖包
+npm install
+
+# 启动 Vite 本地开发热服务器
+npm run dev
+```
+打开浏览器访问：`http://localhost:5173`。
+
+*   **默认登录账号**：
+    *   管理员：`admin` / `123456`
+    *   ERP操作员：`erp_user` / `123456`
+    *   MES操作员：`mes_user` / `123456`
+    *   WMS操作员：`wms_user` / `123456`
+
+### 8.5 生产环境一键部署 (Docker Compose)
+
+系统已为前后端配置了容器化闭环：
+
+```bash
+# 复制生产环境配置覆盖本地配置
+cp .env.production .env
+
+# 构建并启动整套生产运行栈 (Nginx 代理 + 静态资源 + Python Web + Celery + DB)
+docker-compose up -d --build
+
+# 或者启动 Go 事件驱动版全栈
+docker-compose -f docker-compose.prod.yml up -d --build
+```
 
 ---
 
-### 3. 2026年6月更新日志 (June 2026 Updates)
+## 9. 开发规范与最佳实践
 
-为了实现系统上架和生产环境的完整闭环，本次更新进行了以下全面优化：
+*   **编码风格**：
+    *   Python 使用 **PEP8** 标准规范，接口层强类型推断，函数控制在 50 行内。
+    *   Go 代码完全基于 **Clean Architecture** 设计，杜绝从 controller 直接操纵 sql。必须通过领域层和应用层服务封装，业务常量统一归类至 `constants.py`/`constants.go`，剔除硬编码魔法字。
+*   **Git 提交规范**：
+    遵循业界约定式提交规范：
+    *   `feat`: 增加新业务线功能。
+    *   `fix`: 修复系统 Bug。
+    *   `docs`: 修改说明文档。
+    *   `refactor`: 在不影响功能的前提下重构底层。
+    *   `test`: 编写或修改单元测试。
+*   **数据库修改规范**：
+    *   Python 严格禁止手动去数据库执行 DDL 语句，必须编写 Alembic 迁移脚本。
+    *   Go 的 Ent ORM 迁移逻辑全自动在 `ProvideDB` 的 Fx 生命周期 `OnStart` 阶段触发升级。
 
-#### 3.1 前后端接口闭环修复
-- **生产工单 (MES - WorkOrderList.tsx)**:
-  - 绑定“新建工单”按钮，添加创建工单弹窗表单，对接 `POST /api/v1/erp/work-orders/create`。
-  - 工单卡片增加“开始生产”按钮，对接 `POST /api/v1/mes/work-orders/{id}/start`。
-  - 工单卡片增加“完成生产”按钮，对接 `POST /api/v1/mes/work-orders/{id}/complete`。
-  - 移除了未实现具体逻辑的“导出”和“筛选”等空壳按钮，避免产生误导。
-- **其他列表页补齐「编辑修改」功能**:
-  - 为 `ProductList.tsx` (产品管理), `MaterialList.tsx` (物料管理), `SupplierList.tsx` (供应商管理), `SalesOrderList.tsx` (销售订单管理) 补充了「编辑/修改」按钮与复用表单弹窗，完美对接后端 `PUT` 接口。
+---
 
-#### 3.2 数据库迁移及初始化修复
-- **修复 RBAC 迁移失败报错 (`UndefinedTable`)**:
-  - 修复了 Alembic 迁移脚本 `c4d5e6f7a8b9_init_rbac_data.py` 的建表逻辑，在注入权限数据之前先安全地创建了 `auth_permissions`, `auth_roles`, `role_permission` 和 `user_role` 这 4 张关键表。
-  - 数据库迁移及数据种子（`python seed.py`）现在在干净的环境中可以 100% 一键跑通。
+## 10. 更新日志 (2026年6月)
 
-#### 3.3 可观测性与健壮性提升
-- **健康检查 (Health Check)**:
-  - 升级了 `/health` 接口，支持对 PostgreSQL 数据库和 Redis 的真实 Ping 探测并返回细粒度组件状态。
-- **Celery 容错性**:
-  - 对 PDF 报表生成异步任务增加了自动重试与指数退避（Exponential Backoff）机制，防止偶发数据库掉线引起任务崩溃。
+本次更新彻底打通了系统上架的各个业务断路，完成了业务链的闭环：
+*   **MES 页面功能闭环**：
+    *   在生产工单管理界面（`WorkOrderList.tsx`）绑定了「新建工单」功能弹窗，对接后端 `POST /api/v1/erp/work-orders/create`（之前页面只有表格，没有工单生成能力）。
+    *   为工单卡片增加并绑定「开始生产」及「完成生产」功能按钮，完美闭环对接 MES 控制端 API。
+    *   移除界面无用空按钮，防止操作歧义。
+*   **主要列表修改页闭环**：
+    *   在 `ProductList` (产品), `MaterialList` (物料), `SupplierList` (供应商) 等页面增加「修改编辑」按钮，对接 PUT API 并进行表单数据回填，用户可无缝进行基础主数据的更正。
+*   **Alembic 自动迁移修复**：
+    *   修复了 Alembic 历史脚本中建表报错的问题。建表逻辑先于权限种子数据注入，解决干净数据库下直接一键 upgrade 会报 `UndefinedTable` 的错，极速降低了本地部署搭建门槛。
+*   **健康状态深度探测**：
+    *   编写并在后台应用了 `/health` 探针路由，实时对 Postgres、Redis 以及应用健康状态进行心跳 Ping 级检测。
+*   **Celery 可靠性保障**：
+    *   为异步报表任务引入了自动重试与指数退避机制，有效抵御由于偶尔数据库抖动闪断带来的生成任务崩溃。
 
+---
+
+## 11. 许可证 (License)
+
+本项目遵循 **MIT** 许可证，详情请参见 [LICENSE](LICENSE) 文件。
