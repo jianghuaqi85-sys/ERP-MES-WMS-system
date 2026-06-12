@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.apps.auth.dependencies import get_current_user, require_roles
+from app.apps.auth.dependencies import get_current_user, require_permissions
 from app.apps.auth.models import User
 from app.apps.mes.models import WorkOrder, WorkOrderProcess
 from app.apps.mes.schemas import (
@@ -55,7 +55,7 @@ def get_work_order(
 def start_work_order(
     work_order_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "MES_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "MES_USER"])),
 ):
     """开始生产"""
     try:
@@ -70,7 +70,7 @@ def report_production(
     work_order_id: int,
     request: WorkOrderReportRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "MES_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "MES_USER"])),
 ):
     """MES 生产报工 (扣库存、加成品、写溯源)"""
     try:
@@ -89,7 +89,7 @@ def report_production(
 def complete_work_order(
     work_order_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "MES_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "MES_USER"])),
 ):
     """完成工单"""
     try:
@@ -103,7 +103,7 @@ def complete_work_order(
 def close_work_order(
     work_order_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "MES_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "MES_USER"])),
 ):
     """关闭工单"""
     try:
@@ -139,7 +139,7 @@ def create_process(
     work_order_id: int,
     request: WorkOrderProcessCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "MES_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "MES_USER"])),
 ):
     wo = db.query(WorkOrder).filter(WorkOrder.id == work_order_id).first()
     if not wo:

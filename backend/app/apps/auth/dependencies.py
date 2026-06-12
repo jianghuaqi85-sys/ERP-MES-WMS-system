@@ -10,6 +10,7 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.apps.auth.models import User, Role, Permission
 from app.core.database import get_db
 from app.apps.auth.models import User
 
@@ -47,16 +48,30 @@ def get_current_user(
     return user
 
 
-def require_roles(allowed_roles: List[str]):
+def require_permissions(allowed_permissions: List[str]):
+    """Permission checker dependency factory.
+    Checks whether the current user possesses any of the roles or permissions listed in ``allowed_permissions``.
+    Supports admin bypass and backward compatibility for role-based checks.
     """
-    角色权限校验装饰器工厂
-    用法: current_user: User = Depends(require_roles(["ADMIN", "WMS_USER"]))
-    """
-    def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in allowed_roles:
+    def permission_checker(current_user: User = Depends(get_current_user)) -> User:
+        user_role_names = {role.name for role in current_user.roles}
+        user_permission_names = {perm.name for role in current_user.roles for perm in role.permissions}
+        
+        # Admin bypass
+        if "ADMIN" in user_role_names or "admin:*" in user_permission_names:
+            return current_user
+            
+        # Check roles or permissions (OR logic)
+        has_role = any(r in user_role_names for r in allowed_permissions)
+        has_perm = any(p in user_permission_names for p in allowed_permissions)
+        
+        if not (has_role or has_perm):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"权限不足，需要角色: {', '.join(allowed_roles)}",
+                detail=f"权限不足，需要以下之一: {', '.join(allowed_permissions)}",
             )
         return current_user
-    return role_checker
+    return permission_checker
+
+# Backward compatibility: keep the old name for existing imports
+require_roles = require_permissions

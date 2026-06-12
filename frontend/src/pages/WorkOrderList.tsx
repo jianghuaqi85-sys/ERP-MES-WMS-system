@@ -45,6 +45,15 @@ export const WorkOrderList: React.FC = () => {
     consumed_materials: [{ material_id: 0, quantity: 1, inventory_location_code: '', material_barcode: '' }] as ConsumedMaterial[],
   });
 
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    product_id: '',
+    planned_quantity: 1,
+    sales_order_id: '',
+    bom_id: '',
+    remark: ''
+  });
+
   const fetchWorkOrders = async () => {
     setLoading(true);
     try {
@@ -81,6 +90,52 @@ export const WorkOrderList: React.FC = () => {
       fetchWorkOrders();
     } catch (e: any) {
       toast.error(e.response?.data?.detail || '报工失败', { id: toastId });
+    }
+  };
+
+  const handleCreateWorkOrder = async () => {
+    if (!createForm.product_id || !createForm.planned_quantity) {
+      toast.error('请输入产品ID和计划数量');
+      return;
+    }
+    const toastId = toast.loading('正在创建工单...');
+    try {
+      await api.post('/api/v1/erp/work-orders/create', {
+        product_id: Number(createForm.product_id),
+        planned_quantity: Number(createForm.planned_quantity),
+        sales_order_id: createForm.sales_order_id ? Number(createForm.sales_order_id) : undefined,
+        bom_id: createForm.bom_id ? Number(createForm.bom_id) : undefined,
+        remark: createForm.remark || undefined
+      });
+      toast.success('创建成功！', { id: toastId });
+      setShowCreateForm(false);
+      setCreateForm({ product_id: '', planned_quantity: 1, sales_order_id: '', bom_id: '', remark: '' });
+      fetchWorkOrders();
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || '创建失败', { id: toastId });
+    }
+  };
+
+  const handleStart = async (id: number) => {
+    const toastId = toast.loading('正在开始工单...');
+    try {
+      await api.post(`/api/v1/mes/work-orders/${id}/start`);
+      toast.success('工单已开始', { id: toastId });
+      fetchWorkOrders();
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || '操作失败', { id: toastId });
+    }
+  };
+
+  const handleComplete = async (id: number) => {
+    if (!confirm('确定要完成该工单吗？')) return;
+    const toastId = toast.loading('正在完成工单...');
+    try {
+      await api.post(`/api/v1/mes/work-orders/${id}/complete`);
+      toast.success('工单已完成', { id: toastId });
+      fetchWorkOrders();
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || '操作失败', { id: toastId });
     }
   };
 
@@ -127,13 +182,13 @@ export const WorkOrderList: React.FC = () => {
               className="w-56 bg-zinc-950 border border-zinc-800 rounded py-1.5 pl-8 pr-3 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 transition-colors"
             />
           </div>
-          <button className="glass-panel px-3 py-1.5 rounded text-xs text-zinc-300 hover:text-white flex items-center gap-1.5 hover:bg-zinc-800 transition-colors">
+          {/* <button className="glass-panel px-3 py-1.5 rounded text-xs text-zinc-300 hover:text-white flex items-center gap-1.5 hover:bg-zinc-800 transition-colors">
             <Filter className="w-3.5 h-3.5" /> 筛选
           </button>
           <button className="glass-panel px-3 py-1.5 rounded text-xs text-zinc-300 hover:text-white flex items-center gap-1.5 hover:bg-zinc-800 transition-colors">
             <Download className="w-3.5 h-3.5" /> 导出
-          </button>
-          <button className="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 transition-colors">
+          </button> */}
+          <button onClick={() => setShowCreateForm(true)} className="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 transition-colors">
             <Plus className="w-3.5 h-3.5" /> 新建工单
           </button>
         </div>
@@ -195,17 +250,28 @@ export const WorkOrderList: React.FC = () => {
                   )}
                 </div>
 
-                <button
-                  onClick={() => openReport(wo)}
-                  disabled={wo.status === 'COMPLETED' || wo.status === 'CLOSED'}
-                  className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs py-1.5 rounded flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-zinc-700"
-                >
-                  {wo.status === 'COMPLETED' || wo.status === 'CLOSED' ? (
-                    <><CheckCircle className="w-3.5 h-3.5" /> 已完成</>
-                  ) : (
-                    <><Play className="w-3.5 h-3.5" /> 生产报工</>
+                <div className="flex gap-2">
+                  {['PLANNED', 'NOT_STARTED'].includes(wo.status) && (
+                    <button onClick={() => handleStart(wo.id)} className="flex-1 bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 text-xs py-1.5 rounded transition-colors flex items-center justify-center gap-1">
+                      <Play className="w-3.5 h-3.5" /> 开始生产
+                    </button>
                   )}
-                </button>
+                  {wo.status === 'IN_PROGRESS' && (
+                    <>
+                      <button onClick={() => openReport(wo)} className="flex-1 bg-amber-600/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600/30 text-xs py-1.5 rounded transition-colors flex items-center justify-center gap-1">
+                        <ClipboardList className="w-3.5 h-3.5" /> 报工
+                      </button>
+                      <button onClick={() => handleComplete(wo.id)} className="flex-1 bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 text-xs py-1.5 rounded transition-colors flex items-center justify-center gap-1">
+                        <CheckCircle className="w-3.5 h-3.5" /> 完工
+                      </button>
+                    </>
+                  )}
+                  {['COMPLETED', 'CLOSED'].includes(wo.status) && (
+                     <button disabled className="w-full bg-zinc-800 text-zinc-500 text-xs py-1.5 rounded flex items-center justify-center gap-1.5 border border-zinc-700 opacity-50 cursor-not-allowed">
+                       <CheckCircle className="w-3.5 h-3.5" /> 已完成
+                     </button>
+                  )}
+                </div>
               </div>
               );
             }}
@@ -298,6 +364,48 @@ export const WorkOrderList: React.FC = () => {
               <button onClick={handleReport} className="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5">
                 <CheckCircle className="w-3.5 h-3.5" /> 确认报工
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 新建工单弹窗 */}
+      {showCreateForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="glass-panel border-zinc-700 rounded-md w-full max-w-md z-10 flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center p-4 border-b border-zinc-800 bg-[#18181b]">
+              <h3 className="text-sm font-bold text-zinc-100">新建工单</h3>
+              <button onClick={() => setShowCreateForm(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4 bg-[#09090b]">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-zinc-500 mb-1">成品 ID *</label>
+                  <input type="number" value={createForm.product_id} onChange={e => setCreateForm({...createForm, product_id: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500" placeholder="必填" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-500 mb-1">计划生产数量 *</label>
+                  <input type="number" value={createForm.planned_quantity} onChange={e => setCreateForm({...createForm, planned_quantity: Number(e.target.value)})} className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-500 mb-1">关联销售订单 ID</label>
+                  <input type="number" value={createForm.sales_order_id} onChange={e => setCreateForm({...createForm, sales_order_id: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500" placeholder="选填" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-500 mb-1">关联 BOM ID</label>
+                  <input type="number" value={createForm.bom_id} onChange={e => setCreateForm({...createForm, bom_id: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500" placeholder="选填" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">备注</label>
+                <textarea value={createForm.remark} onChange={e => setCreateForm({...createForm, remark: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 h-16 resize-none" placeholder="选填"></textarea>
+              </div>
+            </div>
+            <div className="p-4 border-t border-zinc-800 bg-[#18181b] flex justify-end gap-2">
+              <button onClick={() => setShowCreateForm(false)} className="px-4 py-1.5 rounded text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent">取消</button>
+              <button onClick={handleCreateWorkOrder} className="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-1.5 rounded text-xs font-medium">创建工单</button>
             </div>
           </div>
         </div>

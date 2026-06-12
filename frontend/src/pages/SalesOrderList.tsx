@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ShoppingCart, Plus, Search, Check, Truck, X } from 'lucide-react';
+import { ShoppingCart, Plus, Search, Check, Truck, X, Edit } from 'lucide-react';
 import api from '../utils/axios';
 
 interface SalesOrder {
@@ -28,6 +28,7 @@ export const SalesOrderList: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState(new URLSearchParams(window.location.search).get('keyword') || '');
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState({ customer_name: '', product_id: 0, quantity: 1, unit_price: 0, remark: '' });
 
   const fetchOrders = async () => {
@@ -44,14 +45,29 @@ export const SalesOrderList: React.FC = () => {
 
   useEffect(() => { fetchOrders(); }, []);
 
-  const handleCreate = async () => {
+  const openCreate = () => {
+    setFormData({ customer_name: '', product_id: 0, quantity: 1, unit_price: 0, remark: '' });
+    setEditingId(null);
+    setShowForm(true);
+  };
+
+  const openEdit = (o: SalesOrder) => {
+    setFormData({ customer_name: o.customer_name, product_id: o.product_id, quantity: o.quantity, unit_price: o.unit_price, remark: '' });
+    setEditingId(o.id);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
     try {
-      await api.post('/api/v1/erp/sales-orders', formData);
+      if (editingId) {
+        await api.put(`/api/v1/erp/sales-orders/${editingId}`, formData);
+      } else {
+        await api.post('/api/v1/erp/sales-orders', formData);
+      }
       setShowForm(false);
-      setFormData({ customer_name: '', product_id: 0, quantity: 1, unit_price: 0, remark: '' });
       fetchOrders();
     } catch (e: any) {
-      alert(e.response?.data?.detail || '创建失败');
+      alert(e.response?.data?.detail || '保存失败');
     }
   };
 
@@ -95,7 +111,7 @@ export const SalesOrderList: React.FC = () => {
           </h2>
           <p className="text-gray-400 text-sm mt-1">管理客户销售订单</p>
         </div>
-        <button onClick={() => setShowForm(true)} className="bg-purple-500/20 text-purple-400 border border-purple-500/50 hover:bg-purple-500/30 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
+        <button onClick={openCreate} className="bg-purple-500/20 text-purple-400 border border-purple-500/50 hover:bg-purple-500/30 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
           <Plus className="w-4 h-4" /> 新增订单
         </button>
       </div>
@@ -133,6 +149,9 @@ export const SalesOrderList: React.FC = () => {
                   </span>
                 </td>
                 <td className="p-4 flex gap-2">
+                  <button onClick={() => openEdit(o)} className="text-blue-400 hover:text-blue-300 transition-colors" title="编辑">
+                    <Edit className="w-4 h-4" />
+                  </button>
                   {o.status === 'DRAFT' && (
                     <>
                       <button onClick={() => handleConfirm(o.id)} className="text-blue-400 hover:text-blue-300 transition-colors" title="确认"><Check className="w-4 h-4" /></button>
@@ -155,7 +174,7 @@ export const SalesOrderList: React.FC = () => {
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-white/10 rounded-2xl p-6 w-full max-w-md">
-            <h3 className="text-lg font-bold mb-4">新增销售订单</h3>
+            <h3 className="text-lg font-bold mb-4">{editingId ? '编辑销售订单' : '新增销售订单'}</h3>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-1">客户名称</label>
@@ -178,7 +197,7 @@ export const SalesOrderList: React.FC = () => {
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => setShowForm(false)} className="px-4 py-2 rounded-lg text-gray-400 hover:text-gray-200 transition-colors">取消</button>
-              <button onClick={handleCreate} className="bg-purple-500/20 text-purple-400 border border-purple-500/50 hover:bg-purple-500/30 px-4 py-2 rounded-lg transition-colors">创建</button>
+              <button onClick={handleSave} className="bg-purple-500/20 text-purple-400 border border-purple-500/50 hover:bg-purple-500/30 px-4 py-2 rounded-lg transition-colors">保存</button>
             </div>
           </div>
         </div>

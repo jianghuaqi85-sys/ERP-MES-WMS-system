@@ -1,12 +1,16 @@
 import time
 import traceback
+import redis
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 
 from app.core.config import settings
+from app.core.database import get_db
 
 # Configure Loguru
 logger.add("logs/app.log", rotation="500 MB", retention="10 days", level="INFO")
@@ -67,5 +71,33 @@ def read_root():
     return {"message": f"Welcome to {settings.PROJECT_NAME}"}
 
 @app.get("/health")
-def health_check():
-    return {"status": "healthy"}
+def health_check(db: Session = Depends(get_db)):
+    health_status = {
+        "status": "healthy",
+        "database": "up",
+        "redis": "up",
+        "project": settings.PROJECT_NAME,
+        "environment": settings.ENVIRONMENT
+    }
+    status_code = 200
+    
+    # 1. Test Database connection
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error(f"Health check failed for database: {e}")
+        health_status["database"] = f"down: {str(e)}"
+        health_status["status"] = "unhealthy"
+        status_code = 503
+        
+    # 2. Test Redis connection
+    try:
+        r = redis.from_url(settings.REDIS_URL, socket_timeout=3)
+        r.ping()
+    except Exception as e:
+        logger.error(f"Health check failed for Redis: {e}")
+        health_status["redis"] = f"down: {str(e)}"
+        health_status["status"] = "unhealthy"
+        status_code = 503
+        
+    return JSONResponse(status_code=status_code, content=health_status)

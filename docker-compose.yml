@@ -67,6 +67,38 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/logs:/app/logs
+      - ./reports:/app/reports
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: erp_mes_wms_celery
+    command: celery -A app.celery_app worker --loglevel=info
+    restart: always
+    environment:
+      - ENVIRONMENT=development
+      - POSTGRES_SERVER=postgres
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=erp_system
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SECRET_KEY=dev-secret-key-change-in-production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./reports:/app/reports
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
 
   frontend:
     build:
@@ -78,6 +110,7 @@ services:
       - "80:80"
     depends_on:
       - backend
+      - celery_worker
 
 volumes:
   postgres_data:

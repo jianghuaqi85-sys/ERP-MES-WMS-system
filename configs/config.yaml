@@ -1,0 +1,6 @@
+server:
+  port: 8080
+  mode: "development" # development or production
+logger:
+  level: "debug" # debug, info, warn, error
+  encoding: "console" # console or json

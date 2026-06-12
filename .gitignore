@@ -65,3 +65,7 @@ docker-compose.override.yml
 # ===========================================
 Desktop.ini
 ehthumbs.db
+
+# Executables & Agent system folders
+server.exe
+.agents/

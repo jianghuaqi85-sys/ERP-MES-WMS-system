@@ -561,3 +561,98 @@ apps/<module>/
 ## License
 
 MIT
+
+
+## RBAC 权限控制与 Celery 异步任务文档
+
+### 1. RBAC 权限控制模型
+
+本系统基于 **角色的访问控制 (RBAC)**，通过多对多关系关联用户 (User)、角色 (Role) 和权限 (Permission)。
+
+#### 1.1 数据库设计
+系统内置了以下四张核心表：
+- `auth_users`: 用户表，记录用户名、加密密码、激活状态等。
+- `auth_roles`: 角色表，包含 `ADMIN` (系统管理员), `ERP_USER` (ERP操作员), `MES_USER` (MES操作员), `WMS_USER` (WMS操作员)。
+- `auth_permissions`: 权限表，存储细粒度的权限，如 `admin:*`, `erp:read`, `erp:write`, `mes:read`, `mes:write`, `wms:read`, `wms:write`。
+- `role_permission`: 角色与权限的关联表 (多对多)。
+- `user_role`: 用户与角色的关联表 (多对多)。
+
+#### 1.2 默认角色与权限对应表
+| 角色 (Role) | 权限 (Permission) | 说明 |
+| :--- | :--- | :--- |
+| **ADMIN** | `admin:*` | 系统最高管理员，自动绕过所有权限检查 |
+| **ERP_USER** | `erp:read`, `erp:write` | ERP 系统的读写权限（管理产品、BOM、销售与采购订单等） |
+| **MES_USER** | `mes:read`, `mes:write` | MES 系统的读写权限（管理生产工单、工单报工与状态流转等） |
+| **WMS_USER** | `wms:read`, `wms:write` | WMS 系统的读写权限（管理物料、出入库、盘点等） |
+
+#### 1.3 权限拦截注入器使用示例
+在接口中使用 `Depends(require_permissions([...]))` (别名 `require_roles`) 进行权限控制。接口校验采用 **OR 逻辑**：用户拥有的角色名或具体权限名只要有一个命中，即允许访问（ADMIN 自动放行）。
+
+```python
+from fastapi import APIRouter, Depends
+from app.apps.auth.dependencies import require_permissions as require_roles
+from app.apps.auth.models import User
+
+router = APIRouter()
+
+# 示例 1: 仅限 ADMIN 和 ERP_USER 访问
+@router.post("/products")
+def create_product(current_user: User = Depends(require_roles(["ADMIN", "ERP_USER"]))):
+    return {"message": "Success"}
+
+# 示例 2: 仅限拥有特定细粒度权限的成员访问
+@router.get("/sensitive-data")
+def read_sensitive(current_user: User = Depends(require_roles(["erp:write"]))):
+    return {"data": "Secret"}
+```
+
+---
+
+### 2. Celery 异步任务 (报表生成)
+
+系统集成 Celery 异步任务框架（Redis 作为 Broker 和 Backend 结果存储），实现耗时的财务报表 PDF 生成功能，防止阻塞 Web 主线程。
+
+#### 2.1 服务架构
+- **Broker & Backend**: `redis://localhost:6379/0`
+- **Worker 启动命令**: `celery -A app.celery_app worker --loglevel=info`
+- **PDF 生成库**: ReportLab (已集成 `fonts-wqy-microhei` 开源字体以完美支持中文 PDF 渲染，避免产生乱码)
+
+#### 2.2 报表任务 API 文档
+
+##### 2.2.1 触发财务报告生成
+- **请求方法**: `GET`
+- **接口路径**: `/api/v1/erp/reports/financial/{order_id}`
+- **权限要求**: `ADMIN` 或 `ERP_USER`
+- **响应参数**:
+  ```json
+  {
+    "task_id": "8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719",
+    "status": "PENDING"
+  }
+  ```
+
+##### 2.2.2 查询任务状态及下载链接
+- **请求方法**: `GET`
+- **接口路径**: `/api/v1/erp/reports/status/{task_id}`
+- **权限要求**: 需登录用户 (`get_current_user`)
+- **响应参数 (任务进行中/排队中)**:
+  ```json
+  {
+    "task_id": "8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719",
+    "status": "PENDING"
+  }
+  ```
+- **响应参数 (任务完成)**:
+  ```json
+  {
+    "task_id": "8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719",
+    "status": "SUCCESS",
+    "download_url": "/api/v1/erp/reports/download/financial_report_1_8b5f3a1e-84b2-4d2c-974a-2cfc2bc6e719.pdf"
+  }
+  ```
+
+##### 2.2.3 下载生成的 PDF 报表
+- **请求方法**: `GET`
+- **接口路径**: `/api/v1/erp/reports/download/{filename}`
+- **权限要求**: 需登录用户 (`get_current_user`)
+- **响应**: PDF 文件流 (Response Content-Type: `application/pdf`)

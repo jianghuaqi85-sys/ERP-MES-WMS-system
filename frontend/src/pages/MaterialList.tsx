@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Database, Plus, Search, ArrowDownToLine, ArrowUpFromLine, Trash2 } from 'lucide-react';
+import { Database, Plus, Search, ArrowDownToLine, ArrowUpFromLine, Trash2, Edit } from 'lucide-react';
 import api from '../utils/axios';
 
 interface Material {
@@ -28,6 +28,7 @@ export const MaterialList: React.FC = () => {
   const [keyword, setKeyword] = useState(new URLSearchParams(window.location.search).get('keyword') || '');
   const [tab, setTab] = useState<'materials' | 'inventory'>('materials');
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [showReceive, setShowReceive] = useState(false);
   const [formData, setFormData] = useState({ material_code: '', name: '', unit: 'pcs', category: '', safety_stock: 0 });
   const [receiveForm, setReceiveForm] = useState({ material_id: 0, quantity: 1, location_code: '', batch_number: '' });
@@ -61,14 +62,29 @@ export const MaterialList: React.FC = () => {
     else fetchInventory();
   }, [tab]);
 
-  const handleCreateMaterial = async () => {
+  const openCreateMaterial = () => {
+    setFormData({ material_code: '', name: '', unit: 'pcs', category: '', safety_stock: 0 });
+    setEditingId(null);
+    setShowForm(true);
+  };
+
+  const openEditMaterial = (m: Material) => {
+    setFormData({ material_code: m.material_code, name: m.name, unit: m.unit, category: m.category || '', safety_stock: m.safety_stock });
+    setEditingId(m.id);
+    setShowForm(true);
+  };
+
+  const handleSaveMaterial = async () => {
     try {
-      await api.post('/api/v1/wms/materials', formData);
+      if (editingId) {
+        await api.put(`/api/v1/wms/materials/${editingId}`, formData);
+      } else {
+        await api.post('/api/v1/wms/materials', formData);
+      }
       setShowForm(false);
-      setFormData({ material_code: '', name: '', unit: 'pcs', category: '', safety_stock: 0 });
       fetchMaterials();
     } catch (e: any) {
-      alert(e.response?.data?.detail || '创建失败');
+      alert(e.response?.data?.detail || '保存失败');
     }
   };
 
@@ -108,7 +124,7 @@ export const MaterialList: React.FC = () => {
           <button onClick={() => setShowReceive(true)} className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/30 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
             <ArrowDownToLine className="w-4 h-4" /> 入库
           </button>
-          <button onClick={() => setShowForm(true)} className="bg-amber-500/20 text-amber-400 border border-amber-500/50 hover:bg-amber-500/30 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
+          <button onClick={openCreateMaterial} className="bg-amber-500/20 text-amber-400 border border-amber-500/50 hover:bg-amber-500/30 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
             <Plus className="w-4 h-4" /> 新增物料
           </button>
         </div>
@@ -157,7 +173,10 @@ export const MaterialList: React.FC = () => {
                   <td className="p-4 text-gray-400">{m.unit}</td>
                   <td className="p-4 text-gray-400">{m.category || '-'}</td>
                   <td className="p-4 text-gray-300">{m.safety_stock}</td>
-                  <td className="p-4">
+                  <td className="p-4 flex gap-2">
+                    <button onClick={() => openEditMaterial(m)} className="text-blue-400 hover:text-blue-300 transition-colors">
+                      <Edit className="w-4 h-4" />
+                    </button>
                     <button onClick={() => handleDeleteMaterial(m.id)} className="text-red-400 hover:text-red-300 transition-colors">
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -206,7 +225,7 @@ export const MaterialList: React.FC = () => {
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-white/10 rounded-2xl p-6 w-full max-w-md">
-            <h3 className="text-lg font-bold mb-4">新增物料</h3>
+            <h3 className="text-lg font-bold mb-4">{editingId ? '编辑物料' : '新增物料'}</h3>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -235,7 +254,7 @@ export const MaterialList: React.FC = () => {
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => setShowForm(false)} className="px-4 py-2 rounded-lg text-gray-400 hover:text-gray-200 transition-colors">取消</button>
-              <button onClick={handleCreateMaterial} className="bg-amber-500/20 text-amber-400 border border-amber-500/50 hover:bg-amber-500/30 px-4 py-2 rounded-lg transition-colors">创建</button>
+              <button onClick={handleSaveMaterial} className="bg-amber-500/20 text-amber-400 border border-amber-500/50 hover:bg-amber-500/30 px-4 py-2 rounded-lg transition-colors">保存</button>
             </div>
           </div>
         </div>

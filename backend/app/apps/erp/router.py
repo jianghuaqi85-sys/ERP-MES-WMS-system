@@ -1,12 +1,17 @@
+import os
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from celery.result import AsyncResult
+from app.celery_app import celery_app
+from app.tasks.report import generate_report
 from app.core.database import get_db
 from app.core.redis import CacheService, CACHE_KEYS
-from app.apps.auth.dependencies import get_current_user, require_roles
+from app.apps.auth.dependencies import get_current_user, require_permissions as require_roles
 from app.apps.auth.models import User
 from app.apps.erp.models import BOM, Product, PurchaseOrder, SalesOrder, Supplier
 from app.apps.erp.schemas import (
@@ -399,3 +404,71 @@ def create_work_order(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ===========================================
+# 报表生成管理 (Celery 异步任务)
+# ===========================================
+@router.get("/reports/financial/{order_id}")
+def generate_financial_report(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(["ADMIN", "ERP_USER"])),
+):
+    """触发异步财务报告生成任务"""
+    # 验证订单是否存在
+    order = db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="销售订单不存在")
+    
+    # 触发 celery 任务
+    task = generate_report.delay(order_id)
+    return {"task_id": task.id, "status": "PENDING"}
+
+
+@router.get("/reports/status/{task_id}")
+def get_report_status(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """查询财务报告生成任务的状态并获取下载链接"""
+    task_result = AsyncResult(task_id, app=celery_app)
+    
+    result_data = {
+        "task_id": task_id,
+        "status": task_result.status,
+    }
+    
+    if task_result.status == "SUCCESS":
+        file_path = task_result.result
+        if file_path:
+            filename = os.path.basename(file_path)
+            result_data["download_url"] = f"/api/v1/erp/reports/download/{filename}"
+    elif task_result.status == "FAILURE":
+        result_data["error"] = str(task_result.info)
+        
+    return result_data
+
+
+@router.get("/reports/download/{filename}")
+def download_report(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+):
+    """下载生成的 PDF 报告"""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="无效的文件名")
+        
+    reports_dir = os.path.abspath(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "reports")
+    )
+    file_path = os.path.join(reports_dir, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="报告文件不存在")
+        
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=filename
+    )

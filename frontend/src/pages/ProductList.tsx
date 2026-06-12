@@ -16,6 +16,7 @@ export const ProductList: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState(new URLSearchParams(window.location.search).get('keyword') || '');
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState({ product_code: '', name: '', price: 0, unit: 'pcs', description: '' });
 
   const fetchProducts = async () => {
@@ -36,14 +37,29 @@ export const ProductList: React.FC = () => {
 
   const handleSearch = () => fetchProducts();
 
-  const handleCreate = async () => {
+  const openCreate = () => {
+    setFormData({ product_code: '', name: '', price: 0, unit: 'pcs', description: '' });
+    setEditingId(null);
+    setShowForm(true);
+  };
+
+  const openEdit = (p: Product) => {
+    setFormData({ product_code: p.product_code, name: p.name, price: p.price, unit: p.unit, description: p.description || '' });
+    setEditingId(p.id);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
     try {
-      await api.post('/api/v1/erp/products', formData);
+      if (editingId) {
+        await api.put(`/api/v1/erp/products/${editingId}`, formData);
+      } else {
+        await api.post('/api/v1/erp/products', formData);
+      }
       setShowForm(false);
-      setFormData({ product_code: '', name: '', price: 0, unit: 'pcs', description: '' });
       fetchProducts();
     } catch (e: any) {
-      alert(e.response?.data?.detail || '创建失败');
+      alert(e.response?.data?.detail || '保存失败');
     }
   };
 
@@ -68,7 +84,7 @@ export const ProductList: React.FC = () => {
           <p className="text-gray-400 text-sm mt-1">管理成品基础数据</p>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={openCreate}
           className="bg-blue-500/20 text-blue-400 border border-blue-500/50 hover:bg-blue-500/30 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
         >
           <Plus className="w-4 h-4" /> 新增产品
@@ -114,7 +130,10 @@ export const ProductList: React.FC = () => {
                 <td className="p-4 text-emerald-400">¥{p.price}</td>
                 <td className="p-4 text-gray-400">{p.unit}</td>
                 <td className="p-4 text-gray-500 max-w-xs truncate">{p.description || '-'}</td>
-                <td className="p-4">
+                <td className="p-4 flex gap-2">
+                  <button onClick={() => openEdit(p)} className="text-blue-400 hover:text-blue-300 transition-colors">
+                    <Edit className="w-4 h-4" />
+                  </button>
                   <button onClick={() => handleDelete(p.id)} className="text-red-400 hover:text-red-300 transition-colors">
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -134,7 +153,7 @@ export const ProductList: React.FC = () => {
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-white/10 rounded-2xl p-6 w-full max-w-md">
-            <h3 className="text-lg font-bold mb-4">新增产品</h3>
+            <h3 className="text-lg font-bold mb-4">{editingId ? '编辑产品' : '新增产品'}</h3>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-1">产品编码</label>
@@ -161,7 +180,7 @@ export const ProductList: React.FC = () => {
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => setShowForm(false)} className="px-4 py-2 rounded-lg text-gray-400 hover:text-gray-200 transition-colors">取消</button>
-              <button onClick={handleCreate} className="bg-blue-500/20 text-blue-400 border border-blue-500/50 hover:bg-blue-500/30 px-4 py-2 rounded-lg transition-colors">创建</button>
+              <button onClick={handleSave} className="bg-blue-500/20 text-blue-400 border border-blue-500/50 hover:bg-blue-500/30 px-4 py-2 rounded-lg transition-colors">保存</button>
             </div>
           </div>
         </div>

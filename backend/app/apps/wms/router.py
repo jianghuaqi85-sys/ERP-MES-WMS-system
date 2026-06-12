@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.apps.auth.dependencies import get_current_user, require_roles
+from app.apps.auth.dependencies import get_current_user, require_permissions
 from app.apps.auth.models import User
 from app.apps.wms.models import Inventory, InventoryTransaction, Material, WarehouseLocation
 from app.apps.wms.schemas import (
@@ -47,7 +47,7 @@ def list_materials(
 def create_material(
     request: MaterialCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "WMS_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "WMS_USER"])),
 ):
     existing = db.query(Material).filter(Material.material_code == request.material_code).first()
     if existing:
@@ -76,7 +76,7 @@ def update_material(
     material_id: int,
     request: MaterialUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "WMS_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "WMS_USER"])),
 ):
     material = db.query(Material).filter(Material.id == material_id).first()
     if not material:
@@ -92,7 +92,7 @@ def update_material(
 def delete_material(
     material_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN"])),
+    current_user: User = Depends(require_permissions(["ADMIN"])),
 ):
     material = db.query(Material).filter(Material.id == material_id).first()
     if not material:
@@ -134,7 +134,7 @@ def list_inventory(
 def receive_material(
     request: MaterialReceiveRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "WMS_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "WMS_USER"])),
 ):
     try:
         inventory = WMSService.receive_material(db, request, current_user.id)
@@ -154,7 +154,7 @@ def receive_material(
 def dispatch_material(
     request: MaterialDispatchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "WMS_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "WMS_USER"])),
 ):
     try:
         inventory = WMSService.dispatch_material(db, request, current_user.id)
@@ -170,7 +170,7 @@ def dispatch_material(
 def stocktake(
     request: StocktakeRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "WMS_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "WMS_USER"])),
 ):
     try:
         inventory = WMSService.stocktake(db, request, current_user.id)
@@ -224,7 +224,7 @@ def list_locations(
 def create_location(
     request: WarehouseLocationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(["ADMIN", "WMS_USER"])),
+    current_user: User = Depends(require_permissions(["ADMIN", "WMS_USER"])),
 ):
     location = WarehouseLocation(**request.model_dump())
     db.add(location)

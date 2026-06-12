@@ -10,9 +10,9 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_VIA_ENV"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1天
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60  # Default to 60 minutes for production security
 
-    # CORS - 生产环境通过环境变量配置允许的来源
+    # CORS - 跨域配置
     CORS_ORIGINS: List[str] = ["*"]
 
     # Database

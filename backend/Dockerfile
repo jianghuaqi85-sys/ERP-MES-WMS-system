@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    fonts-wqy-microhei \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 Python 依赖
@@ -19,4 +20,4 @@ COPY . .
 EXPOSE 8000
 
 # 启动命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
