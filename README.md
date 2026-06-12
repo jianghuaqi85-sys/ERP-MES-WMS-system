@@ -656,3 +656,30 @@ def read_sensitive(current_user: User = Depends(require_roles(["erp:write"]))):
 - **接口路径**: `/api/v1/erp/reports/download/{filename}`
 - **权限要求**: 需登录用户 (`get_current_user`)
 - **响应**: PDF 文件流 (Response Content-Type: `application/pdf`)
+
+---
+
+### 3. 2026年6月更新日志 (June 2026 Updates)
+
+为了实现系统上架和生产环境的完整闭环，本次更新进行了以下全面优化：
+
+#### 3.1 前后端接口闭环修复
+- **生产工单 (MES - WorkOrderList.tsx)**:
+  - 绑定“新建工单”按钮，添加创建工单弹窗表单，对接 `POST /api/v1/erp/work-orders/create`。
+  - 工单卡片增加“开始生产”按钮，对接 `POST /api/v1/mes/work-orders/{id}/start`。
+  - 工单卡片增加“完成生产”按钮，对接 `POST /api/v1/mes/work-orders/{id}/complete`。
+  - 移除了未实现具体逻辑的“导出”和“筛选”等空壳按钮，避免产生误导。
+- **其他列表页补齐「编辑修改」功能**:
+  - 为 `ProductList.tsx` (产品管理), `MaterialList.tsx` (物料管理), `SupplierList.tsx` (供应商管理), `SalesOrderList.tsx` (销售订单管理) 补充了「编辑/修改」按钮与复用表单弹窗，完美对接后端 `PUT` 接口。
+
+#### 3.2 数据库迁移及初始化修复
+- **修复 RBAC 迁移失败报错 (`UndefinedTable`)**:
+  - 修复了 Alembic 迁移脚本 `c4d5e6f7a8b9_init_rbac_data.py` 的建表逻辑，在注入权限数据之前先安全地创建了 `auth_permissions`, `auth_roles`, `role_permission` 和 `user_role` 这 4 张关键表。
+  - 数据库迁移及数据种子（`python seed.py`）现在在干净的环境中可以 100% 一键跑通。
+
+#### 3.3 可观测性与健壮性提升
+- **健康检查 (Health Check)**:
+  - 升级了 `/health` 接口，支持对 PostgreSQL 数据库和 Redis 的真实 Ping 探测并返回细粒度组件状态。
+- **Celery 容错性**:
+  - 对 PDF 报表生成异步任务增加了自动重试与指数退避（Exponential Backoff）机制，防止偶发数据库掉线引起任务崩溃。
+
